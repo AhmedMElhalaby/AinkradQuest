@@ -32,9 +32,13 @@ public final class QuestMCPOperations {
             case "setStatus": try setStatus(json)
             case "deleteItem": try deleteItem(json)
             case "deleteProject": try deleteProject(json)
+            case "addLink": try addLink(json)
+            case "removeLink": try removeLink(json)
             default: failure("Unknown operation \(operation)")
             }
         } catch let error as ArgumentError {
+            return failure(error.message)
+        } catch let error as ValidationError {
             return failure(error.message)
         } catch let error as QuestError {
             return failure(error.message)
@@ -194,7 +198,53 @@ public final class QuestMCPOperations {
         return success("Moved project \(id.uuidString) to trash. It can be restored from Quest.")
     }
 
+    private func addLink(_ json: [String: Any]) throws -> AgentActionResult {
+        let target = try linkTarget(json, operation: "addLink")
+        let link = try link(from: json, operation: "addLink")
+        try store.addLink(to: target, link: link, actor: .agent)
+        return success("Added \(link.scheme.rawValue) link \(link.label).")
+    }
+
+    private func removeLink(_ json: [String: Any]) throws -> AgentActionResult {
+        let target = try linkTarget(json, operation: "removeLink")
+        let link = try link(from: json, operation: "removeLink")
+        try store.removeLink(from: target, link: link, actor: .agent)
+        return success("Removed \(link.scheme.rawValue) link \(link.label).")
+    }
+
     // MARK: helpers
+
+    /// Resolves the project-or-item target, refusing trashed things through the
+    /// same guards the other mutations use.
+    private func linkTarget(_ json: [String: Any], operation: String) throws -> LinkTarget {
+        if let raw = json["itemID"] as? String, let id = UUID(uuidString: raw) {
+            _ = try locateForMutation(id, operation: operation)
+            return .item(id)
+        }
+        if let raw = json["projectID"] as? String, let id = UUID(uuidString: raw) {
+            _ = try locateProjectForMutation(id, operation: operation)
+            return .project(id)
+        }
+        throw ArgumentError(message: "\(operation): missing or invalid argument 'projectID or itemID'")
+    }
+
+    /// Builds the link through the SAME validator the UI uses, so the repo rule
+    /// has one definition.
+    private func link(from json: [String: Any], operation: String) throws -> Link {
+        guard let rawScheme = json["scheme"] as? String,
+              let scheme = LinkScheme(rawValue: rawScheme), scheme != .unknown else {
+            throw ArgumentError(message: "\(operation): missing or invalid argument 'scheme'")
+        }
+        guard let identifier = json["identifier"] as? String else {
+            throw ArgumentError(message: "\(operation): missing or invalid argument 'identifier'")
+        }
+        switch LinkValidation.normalize(scheme: scheme, identifier: identifier,
+                                        label: json["label"] as? String ?? "",
+                                        repo: json["repo"] as? String) {
+        case .valid(let link): return link
+        case .invalid(let message): throw ValidationError(message: message)
+        }
+    }
 
     private struct LocatedProject {
         let document: ProjectDocument
@@ -297,5 +347,12 @@ public final class QuestMCPOperations {
 /// A malformed or missing call argument — distinct from `QuestError`, which
 /// reports domain state (e.g. "no such item") the store already knows about.
 private struct ArgumentError: Error {
+    let message: String
+}
+
+/// A well-formed call whose values fail domain validation — e.g. a repo-scoped
+/// link with no repo. Distinct from `ArgumentError` (an argument is missing or
+/// the wrong shape) so the two failure modes stay readable at the call site.
+private struct ValidationError: Error {
     let message: String
 }

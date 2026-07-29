@@ -24,6 +24,10 @@ import AinkradAppKit
 ///   a scale a person should agree to first, and because the agent cannot judge
 ///   what a stale-looking item was for. Reversible is not the same as
 ///   consequence-free.
+/// - **`add_link` and `remove_link` are mutating and NOT destructive**, for the
+///   same reason creates and updates are not. Attaching or detaching a
+///   reference is cheap, visible in the activity feed, and — unlike a delete —
+///   trivially reversible by calling the other tool with the same arguments.
 ///
 /// `requiresLiveApp` is false on all of them: the store is loaded from
 /// `host.documents` and works with no Quest window open, which is what lets the
@@ -169,6 +173,31 @@ public enum QuestMCPServer {
              destructive: true,
              schemaJSON: schema([("projectID", "string", "The project's UUID.")],
                                 required: ["projectID"])),
+
+        Tool("add_link", "addLink",
+             "Attach a link to a project or a work item. Give EITHER projectID or itemID. "
+             + "Links are how Quest points at the rest of your world: repos, branches, PRs, "
+             + "commits, folders, files and URLs. A branch, pr or commit link MUST also name "
+             + "its repo, because a project routinely has several.",
+             schemaJSON: schema([
+                ("projectID", "string", "The project's UUID. Give this or itemID."),
+                ("itemID", "string", "The work item's UUID. Give this or projectID."),
+                ("scheme", "string", "repo, branch, pr, commit, folder, file or url."),
+                ("identifier", "string", "The path, URL, branch name, PR number or commit sha."),
+                ("label", "string", "Display label. Defaults to the identifier."),
+                ("repo", "string", "Which repo a branch/pr/commit belongs to. Required for those."),
+             ], required: ["scheme", "identifier"])),
+
+        Tool("remove_link", "removeLink",
+             "Remove a link from a project or a work item. Identify the link by the same "
+             + "scheme and identifier it was added with.",
+             schemaJSON: schema([
+                ("projectID", "string", "The project's UUID. Give this or itemID."),
+                ("itemID", "string", "The work item's UUID. Give this or projectID."),
+                ("scheme", "string", "The link's scheme."),
+                ("identifier", "string", "The link's identifier."),
+                ("repo", "string", "The link's repo, for branch/pr/commit links."),
+             ], required: ["scheme", "identifier"])),
     ]
 
     /// Internal rather than private so tests can drive routing without a host.

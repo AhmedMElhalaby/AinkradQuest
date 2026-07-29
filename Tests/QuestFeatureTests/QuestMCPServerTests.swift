@@ -12,6 +12,7 @@ struct QuestMCPServerTests {
             "list_projects", "get_project", "search_items", "get_item",
             "create_project", "update_project", "create_item", "update_item",
             "move_item", "set_status", "delete_item", "delete_project",
+            "add_link", "remove_link",
         ]))
     }
 
@@ -37,9 +38,20 @@ struct QuestMCPServerTests {
             "set_status": "setStatus",
             "delete_item": "deleteItem",
             "delete_project": "deleteProject",
+            "add_link": "addLink",
+            "remove_link": "removeLink",
         ]
         for tool in QuestMCPServer.tools {
             #expect(tool.operation == expected[tool.name])
+        }
+    }
+
+    @Test("the new link tools are mutating but not destructive")
+    func linkToolClassification() throws {
+        for name in ["add_link", "remove_link"] {
+            let tool = try #require(QuestMCPServer.tools.first { $0.name == name })
+            #expect(!tool.destructive)
+            #expect(!tool.readOnly)
         }
     }
 
