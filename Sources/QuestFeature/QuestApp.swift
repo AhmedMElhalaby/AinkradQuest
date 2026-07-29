@@ -47,6 +47,35 @@ public struct QuestApp: AinkradApp {
     public static func chromeFill(host: HostServices) -> Color? {
         host.theme.tokens.background
     }
+
+    /// The per-host MCP server, created once and cached — the same shape as
+    /// `stores`, keyed by the same instance id, because the server MUST read
+    /// the store the window is showing. Building a fresh `ProjectStore` here
+    /// would hand the assistant a detached second copy that reloads from disk
+    /// and never sees a task the user just typed.
+    @MainActor private static let mcpServers = PluginInstanceStorage<MCPAppServer>()
+
+    @MainActor static func mcpServer(for host: HostServices) -> MCPAppServer {
+        mcpServers.value(for: instance(of: host)) {
+            let operations = QuestMCPOperations(store: store(for: host))
+            let (server, failures) = QuestMCPServer.make(appID: id) { operation, arguments in
+                await operations.run(operation: operation, arguments: arguments)
+            }
+            // A dropped tool is a silently missing capability — say so rather
+            // than let the assistant just never see it.
+            if !failures.isEmpty {
+                host.log.error("Quest MCP: tools rejected — \(failures.joined(separator: ", "))")
+            }
+            return server
+        }
+    }
+}
+
+/// Publishes Quest's projects and work items to the host assistant. Cached
+/// per host by `mcpServer(for:)`, so the assistant reads the same store the
+/// window shows.
+extension QuestApp: AinkradAppMCP {
+    public static func makeMCPServer(host: HostServices) -> MCPAppServer { mcpServer(for: host) }
 }
 
 /// Generation 8: release a closed instance's store rather than let it linger
@@ -54,7 +83,9 @@ public struct QuestApp: AinkradApp {
 extension QuestApp: AinkradAppTeardown {
     public static func teardown(instance: PluginInstanceID) {
         stores.remove(instance)
-        // `mcpServers` is added in Task 12; until then, teardown removes only
-        // `stores`.
+        // The MCP server's tool closures capture the operations layer, which
+        // captures this instance's store. Leaving it registered would let the
+        // assistant keep driving an app the user shut.
+        mcpServers.remove(instance)
     }
 }
