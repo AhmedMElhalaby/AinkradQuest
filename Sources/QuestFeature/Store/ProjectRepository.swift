@@ -5,9 +5,13 @@ import Foundation
 /// store is a new conformance rather than a rewrite.
 public protocol ProjectRepository: AnyObject {
     func loadIndex() -> [ProjectSummary]
-    func saveIndex(_ summaries: [ProjectSummary])
+    /// Throws when the write could not be completed. A repository must never
+    /// swallow a failed write: the store's only way to know a save was lost is
+    /// for the repository to say so.
+    func saveIndex(_ summaries: [ProjectSummary]) throws
     func loadProject(_ id: UUID) -> ProjectDocument?
-    func saveProject(_ document: ProjectDocument)
+    /// Throws when the write could not be completed. See `saveIndex`.
+    func saveProject(_ document: ProjectDocument) throws
     func removeProject(_ id: UUID)
 }
 

@@ -72,7 +72,8 @@ struct LinkEditor: View {
             var project = document.project
             project.links.append(link)
             do {
-                try store.updateProject(project, actor: .user)
+                try store.updateProject(project, actor: .user, kind: .linkAdded,
+                                        summary: "added \(link.scheme.rawValue) link \(link.label)")
                 identifier = ""; label = ""; repo = ""; error = nil
             } catch let failure as QuestError {
                 error = failure.message

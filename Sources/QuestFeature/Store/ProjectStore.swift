@@ -73,7 +73,11 @@ public final class ProjectStore {
         return project
     }
 
-    public func updateProject(_ project: Project, actor: ActivityActor) throws {
+    /// `kind`/`summary` let a caller that knows WHAT it changed say so in the
+    /// feed — "added link foo" reads better than a generic "updated project".
+    public func updateProject(_ project: Project, actor: ActivityActor,
+                              kind: ActivityKind = .projectUpdated,
+                              summary: String? = nil) throws {
         guard var document = openProject(project.id) else {
             throw QuestError.projectNotFound(project.id)
         }
@@ -81,8 +85,8 @@ public final class ProjectStore {
         updated.updatedAt = Date()
         document.project = updated
         document.activity.append(ActivityEvent(projectID: updated.id, actor: actor,
-                                               kind: .projectUpdated,
-                                               summary: "updated project \(updated.name)"))
+                                               kind: kind,
+                                               summary: summary ?? "updated project \(updated.name)"))
         commit(document)
     }
 
@@ -127,31 +131,35 @@ public final class ProjectStore {
         saveIndex()
     }
 
+    /// Moves the project's summary into whichever of the two owned lists its
+    /// trashed state calls for. `trashedProjects` is OWNED state, never derived
+    /// from `documents`: after a relaunch no document is open, and rebuilding
+    /// the trash from that cache silently dropped every trashed project out of
+    /// the index on the next unrelated commit.
     private func rebuildIndexEntry(for project: Project) {
         var summary = project.summary
         summary.updatedAt = Date()
-        if let position = projects.firstIndex(where: { $0.id == project.id }) {
-            projects[position] = summary
-        } else if !deletedProjectIDs.contains(project.id) {
-            projects.append(summary)
-        }
-        projects.removeAll { deletedProjectIDs.contains($0.id) }
-        reloadTrash()
-    }
-
-    /// `Project.summary` has no notion of trashedness — a project value does
-    /// not know whether the store considers it deleted — so the store stamps
-    /// `isTrashed = true` here. This is the only place `trashedProjects` is
-    /// built in memory; `saveIndex()` re-stamps on the way to disk too, which
-    /// is redundant with this but kept as belt-and-braces.
-    private func reloadTrash() {
-        trashedProjects = deletedProjectIDs.compactMap { id -> ProjectSummary? in
-            guard var summary = documents[id]?.project.summary else { return nil }
+        if deletedProjectIDs.contains(project.id) {
             summary.isTrashed = true
-            return summary
+            projects.removeAll { $0.id == project.id }
+            if let position = trashedProjects.firstIndex(where: { $0.id == project.id }) {
+                trashedProjects[position] = summary
+            } else {
+                trashedProjects.append(summary)
+            }
+        } else {
+            summary.isTrashed = false
+            trashedProjects.removeAll { $0.id == project.id }
+            if let position = projects.firstIndex(where: { $0.id == project.id }) {
+                projects[position] = summary
+            } else {
+                projects.append(summary)
+            }
         }
     }
 
+    /// Always writes BOTH lists: an entry missing from this array is an entry
+    /// gone from disk.
     private func saveIndex() {
         let liveEntries = projects.map { summary -> ProjectSummary in
             var summary = summary
@@ -163,16 +171,28 @@ public final class ProjectStore {
             summary.isTrashed = true
             return summary
         }
-        repository.saveIndex(liveEntries + trashedEntries)
+        do {
+            try repository.saveIndex(liveEntries + trashedEntries)
+        } catch {
+            persistenceFailure = "Could not save the project index. Changes are kept in memory."
+        }
     }
 
     /// A failed write never drops the in-memory change: it is retried once and
     /// then surfaced, because silently losing a typed task is worse than a banner.
+    ///
+    /// The repository REPORTS failure by throwing. The previous check —
+    /// "does `loadProject` still return nil?" — could only ever detect a lost
+    /// first write of a brand-new project, because a dropped write to an
+    /// existing project still loads the stale document. It also decoded every
+    /// item in the project on every commit.
     private func persist(_ document: ProjectDocument) {
-        repository.saveProject(document)
-        if repository.loadProject(document.project.id) == nil {
-            repository.saveProject(document)
-            if repository.loadProject(document.project.id) == nil {
+        do {
+            try repository.saveProject(document)
+        } catch {
+            do {
+                try repository.saveProject(document)
+            } catch {
                 persistenceFailure = "Could not save \(document.project.name). Changes are kept in memory."
                 return
             }

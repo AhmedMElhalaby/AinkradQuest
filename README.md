@@ -15,6 +15,9 @@ markdown about it.
   columns are project-specific, not global. `kind: "software"` gets
   Backlog/Todo/In Progress/In Review/Done; `kind: "general"` gets the same without
   In Review. Completion follows a status's `done` category, not its name or label text.
+  The scheme is chosen from the project's `kind` at creation and is not editable in
+  v0.1.0 — there is no scheme editor, no store mutator and no MCP tool for it, so
+  "per-project" means "each project carries its own scheme", not "define your own columns".
 - **Links.** Projects and items carry a typed `Link` list — `file`, `folder`, `url`,
   `repo`, `branch`, `pr`, `commit` (unknown schemes decode to `.unknown` rather than being
   dropped, so a link written by a future version still displays). Repo-scoped links

@@ -19,7 +19,7 @@ public enum TimelineLayout {
         public let unscheduled: [WorkItem]
     }
 
-    public static func build(items: [WorkItem], scheme: StatusScheme) -> Result {
+    public static func build(items: [WorkItem]) -> Result {
         let live = items.filter { !$0.isDeleted }
         var unscheduled: [WorkItem] = []
         var dated: [(item: WorkItem, start: Date, end: Date)] = []

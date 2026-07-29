@@ -20,7 +20,7 @@ public enum ItemSort: Sendable, Equatable {
 public enum ItemQuery {
     public static func apply(_ filter: ItemFilter, sort: ItemSort,
                              to items: [WorkItem],
-                             scheme: StatusScheme = .softwareDefault) -> [WorkItem] {
+                             scheme: StatusScheme) -> [WorkItem] {
         let query = filter.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let matched = items.filter { item in
             guard !item.isDeleted else { return false }

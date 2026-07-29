@@ -85,6 +85,58 @@ struct ProjectStoreProjectTests {
         #expect(relaunched.projects.map(\.name) == ["Persisted Oops"])
     }
 
+    @Test("a trashed project survives unrelated commits after a relaunch")
+    func trashSurvivesUnrelatedCommitsAfterRelaunch() throws {
+        let repository = InMemoryProjectRepository()
+        let store = ProjectStore(repository: repository)
+        let trashed = store.createProject(name: "Trashed A", kind: .general, actor: .user)
+        let other = store.createProject(name: "Live B", kind: .general, actor: .user)
+        try store.deleteProject(trashed.id, actor: .user)
+
+        // Relaunch: nothing is open, everything comes from the index.
+        let relaunched = ProjectStore(repository: repository)
+        #expect(relaunched.trashedProjects.map(\.name) == ["Trashed A"])
+
+        // An unrelated write must not evict the trashed project from memory…
+        var renamed = other
+        renamed.name = "Live B renamed"
+        try relaunched.updateProject(renamed, actor: .user)
+        #expect(relaunched.trashedProjects.map(\.name) == ["Trashed A"])
+
+        // …nor from the index on disk, even after several more relaunches.
+        let again = ProjectStore(repository: repository)
+        try again.updateProject(renamed, actor: .user)
+        let third = ProjectStore(repository: repository)
+        #expect(third.trashedProjects.map(\.name) == ["Trashed A"])
+        #expect(third.projects.map(\.name) == ["Live B renamed"])
+        #expect(repository.loadIndex().count == 2)
+
+        try third.restoreProject(trashed.id, actor: .user)
+        #expect(third.trashedProjects.isEmpty)
+        #expect(third.projects.map(\.name).sorted() == ["Live B renamed", "Trashed A"])
+    }
+
+    @Test("a dropped save to an ALREADY-CREATED project still surfaces a failure")
+    func persistenceFailureOnExistingProject() throws {
+        let repository = FailingSaveProjectRepository()
+        repository.failSaves = false
+        let store = ProjectStore(repository: repository)
+        var project = store.createProject(name: "Saved", kind: .general, actor: .user)
+        #expect(store.persistenceFailure == nil)
+
+        // The document already exists on disk, so a stale load looks like success.
+        repository.failSaves = true
+        project.name = "Renamed"
+        try store.updateProject(project, actor: .user)
+
+        #expect(store.persistenceFailure != nil)
+        #expect(store.projects.map(\.name) == ["Renamed"])
+
+        repository.failSaves = false
+        try store.updateProject(project, actor: .user)
+        #expect(store.persistenceFailure == nil)
+    }
+
     @Test("a failed save keeps the in-memory change and surfaces persistenceFailure")
     func persistenceFailureSurfaces() {
         let repository = FailingSaveProjectRepository()

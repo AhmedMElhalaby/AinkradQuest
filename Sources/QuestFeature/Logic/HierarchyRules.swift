@@ -21,11 +21,6 @@ public enum HierarchyRules {
         return depth
     }
 
-    public static func children(of parentID: UUID?, in items: [WorkItem]) -> [WorkItem] {
-        items.filter { !$0.isDeleted && $0.parentID == parentID }
-            .sorted { $0.orderIndex < $1.orderIndex }
-    }
-
     public static func descendants(of id: UUID, in items: [WorkItem]) -> [WorkItem] {
         let direct = items.filter { $0.parentID == id }
         return direct + direct.flatMap { descendants(of: $0.id, in: items) }

@@ -13,10 +13,12 @@ final class MemoryDocumentStore: PluginDocumentStore, @unchecked Sendable {
     var keys: [String] { Array(storage.keys) }
 }
 
-/// A `ProjectRepository` whose `saveProject` silently drops the write, so
-/// tests can verify `ProjectStore.persistenceFailure` without touching disk.
-/// `loadIndex`/`saveIndex` still work normally; only project persistence fails
-/// until `failSaves` is turned off.
+/// A `ProjectRepository` whose `saveProject` REPORTS a failed write by
+/// throwing, so tests can verify `ProjectStore.persistenceFailure` without
+/// touching disk. `loadIndex`/`saveIndex` still work normally; only project
+/// persistence fails until `failSaves` is turned off.
+struct SaveFailure: Error {}
+
 final class FailingSaveProjectRepository: ProjectRepository {
     private var index: [ProjectSummary] = []
     private var documents: [UUID: ProjectDocument] = [:]
@@ -25,8 +27,8 @@ final class FailingSaveProjectRepository: ProjectRepository {
     func loadIndex() -> [ProjectSummary] { index }
     func saveIndex(_ summaries: [ProjectSummary]) { index = summaries }
     func loadProject(_ id: UUID) -> ProjectDocument? { documents[id] }
-    func saveProject(_ document: ProjectDocument) {
-        guard !failSaves else { return }
+    func saveProject(_ document: ProjectDocument) throws {
+        guard !failSaves else { throw SaveFailure() }
         documents[document.project.id] = document
     }
     func removeProject(_ id: UUID) { documents.removeValue(forKey: id) }

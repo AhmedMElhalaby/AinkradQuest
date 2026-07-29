@@ -84,12 +84,15 @@ public final class QuestMCPOperations {
 
     private func getItem(_ json: [String: Any]) throws -> AgentActionResult {
         let id = try uuid(json, "itemID", operation: "getItem")
-        guard let projectID = store.projectID(owning: id),
-              let document = store.openProject(projectID),
-              let item = document.items.first(where: { $0.id == id })
-        else { throw QuestError.itemNotFound(id) }
+        let located = try locate(id)
+        let item = located.item
+        // The store deliberately keeps soft-deleted items reachable by id so
+        // they can be restored. Every UI surface hides them; the assistant
+        // gets told instead, because silently answering about a trashed item
+        // as if it were live is how an agent reports work that no longer exists.
+        let trashNote = located.trashDescription.map { "\nIN TRASH: \($0)\n" } ?? ""
         return success("""
-            \(item.title)
+            \(item.title)\(trashNote)
             id: \(item.id.uuidString)
             type: \(item.type.rawValue)  status: \(item.statusID)  priority: \(item.priority)
             labels: \(item.labels.joined(separator: ", "))
@@ -130,10 +133,7 @@ public final class QuestMCPOperations {
 
     private func updateItem(_ json: [String: Any]) throws -> AgentActionResult {
         let id = try uuid(json, "itemID", operation: "updateItem")
-        guard let projectID = store.projectID(owning: id),
-              let document = store.openProject(projectID),
-              var item = document.items.first(where: { $0.id == id })
-        else { throw QuestError.itemNotFound(id) }
+        var item = try locateForMutation(id, operation: "updateItem").item
         if let title = json["title"] as? String { item.title = title }
         if let body = json["body"] as? String { item.body = body }
         if let labels = json["labels"] as? [String] { item.labels = labels }
@@ -148,6 +148,7 @@ public final class QuestMCPOperations {
         let id = try uuid(json, "itemID", operation: "moveItem")
         let parentID = (json["parentID"] as? String).flatMap(UUID.init(uuidString:))
         let orderIndex = json["orderIndex"] as? Int ?? 0
+        _ = try locateForMutation(id, operation: "moveItem")
         try store.moveItem(id, toParent: parentID, orderIndex: orderIndex, actor: .agent)
         return success("Moved item \(id.uuidString)")
     }
@@ -157,6 +158,7 @@ public final class QuestMCPOperations {
         guard let statusID = json["statusID"] as? String else {
             throw ArgumentError(message: "setStatus: missing or invalid argument 'statusID'")
         }
+        _ = try locateForMutation(id, operation: "setStatus")
         try store.setStatus(id, statusID: statusID, actor: .agent)
         return success("Set \(id.uuidString) to \(statusID)")
     }
@@ -174,6 +176,46 @@ public final class QuestMCPOperations {
     }
 
     // MARK: helpers
+
+    private struct LocatedItem {
+        let projectID: UUID
+        let item: WorkItem
+        let projectIsTrashed: Bool
+
+        /// nil when the item is fully live; otherwise why it is in the trash.
+        var trashDescription: String? {
+            switch (item.isDeleted, projectIsTrashed) {
+            case (true, true): "this item and its project are both in the trash"
+            case (true, false): "this item is in the trash"
+            case (false, true): "this item's project is in the trash"
+            case (false, false): nil
+            }
+        }
+    }
+
+    /// `store.projectID(owning:)` intentionally searches trashed projects too,
+    /// so restore paths can find things. That makes it the assistant's job —
+    /// and therefore this boundary's job — not to treat a trashed item as live.
+    private func locate(_ id: UUID) throws -> LocatedItem {
+        guard let projectID = store.projectID(owning: id),
+              let document = store.openProject(projectID),
+              let item = document.items.first(where: { $0.id == id })
+        else { throw QuestError.itemNotFound(id) }
+        return LocatedItem(projectID: projectID, item: item,
+                           projectIsTrashed: store.trashedProjects.contains { $0.id == projectID })
+    }
+
+    /// Same lookup, but refuses anything in the trash. Mutating a soft-deleted
+    /// item would edit something the user cannot see and did not expect to
+    /// still be writable; restoring first is the explicit step.
+    private func locateForMutation(_ id: UUID, operation: String) throws -> LocatedItem {
+        let located = try locate(id)
+        if let reason = located.trashDescription {
+            throw ArgumentError(message:
+                "\(operation): \(reason). Restore it from Quest's Trash before modifying it.")
+        }
+        return located
+    }
 
     /// A missing or unparseable id argument is the caller's mistake, not "no
     /// such item" — reporting it as `itemNotFound` would hand the assistant a

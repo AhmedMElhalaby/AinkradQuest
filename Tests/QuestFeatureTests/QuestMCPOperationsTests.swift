@@ -90,6 +90,61 @@ struct QuestMCPOperationsTests {
         #expect(store.allItems(in: project.id).count == 1)
     }
 
+    @Test("get_item says so when the item is in the trash")
+    func getItemReportsTrash() async {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+        let epic = try! store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                         title: "E", statusID: "todo", actor: .user)
+        let live = await operations.run(operation: "getItem",
+                                        arguments: #"{"itemID":"\#(epic.id.uuidString)"}"#)
+        #expect(!live.text.contains("IN TRASH"))
+
+        try! store.deleteItem(epic.id, actor: .user)
+        let trashed = await operations.run(operation: "getItem",
+                                           arguments: #"{"itemID":"\#(epic.id.uuidString)"}"#)
+        #expect(!trashed.isError)
+        #expect(trashed.text.contains("IN TRASH"))
+    }
+
+    @Test("mutations refuse a soft-deleted item and say it must be restored first")
+    func mutationsRefuseTrashedItem() async {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+        let epic = try! store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                         title: "E", statusID: "todo", actor: .user)
+        try! store.deleteItem(epic.id, actor: .user)
+        let id = epic.id.uuidString
+
+        for (operation, arguments) in [
+            ("updateItem", #"{"itemID":"\#(id)","title":"Edited"}"#),
+            ("setStatus", #"{"itemID":"\#(id)","statusID":"done"}"#),
+            ("moveItem", #"{"itemID":"\#(id)","orderIndex":3}"#),
+        ] {
+            let result = await operations.run(operation: operation, arguments: arguments)
+            #expect(result.isError, "\(operation) should refuse a trashed item")
+            #expect(result.text.lowercased().contains("trash"))
+            #expect(result.text.contains("Restore"))
+        }
+        #expect(store.allItems(in: project.id)[0].title == "E")
+        #expect(store.allItems(in: project.id)[0].statusID == "todo")
+    }
+
+    @Test("mutations refuse an item inside a trashed project")
+    func mutationsRefuseItemInTrashedProject() async {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+        let epic = try! store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                         title: "E", statusID: "todo", actor: .user)
+        try! store.deleteProject(project.id, actor: .user)
+
+        let result = await operations.run(operation: "setStatus",
+                                          arguments: #"{"itemID":"\#(epic.id.uuidString)","statusID":"done"}"#)
+        #expect(result.isError)
+        #expect(result.text.lowercased().contains("trash"))
+        #expect(store.allItems(in: project.id)[0].statusID == "todo")
+    }
+
     @Test("a missing required argument reports the argument name, not a fabricated item id")
     func missingArgumentIsNotMisreportedAsItemNotFound() async {
         let (operations, _) = makeSubject()

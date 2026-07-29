@@ -130,6 +130,35 @@ struct ProjectStoreItemTests {
         #expect(!live.contains(childA.id))
     }
 
+    @Test("restoring a child also restores its trashed ancestors, so it stays reachable")
+    func restoreRestoresAncestors() throws {
+        let (store, project) = makeStore()
+        let epic = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                        title: "M1", statusID: "todo", actor: .user)
+        let task = try store.createItem(projectID: project.id, parentID: epic.id, type: .task,
+                                        title: "Child", statusID: "todo", actor: .user)
+        let subtask = try store.createItem(projectID: project.id, parentID: task.id, type: .chore,
+                                           title: "Grandchild", statusID: "todo", actor: .user)
+
+        try store.deleteItem(epic.id, actor: .user)
+        try store.restoreItem(subtask.id, actor: .user)
+
+        let live = store.items(in: project.id)
+        let liveIDs = Set(live.map(\.id))
+        #expect(liveIDs.contains(epic.id))
+        #expect(liveIDs.contains(task.id))
+        #expect(liveIDs.contains(subtask.id))
+
+        // Reachable by walking down from the root epic, which is how every
+        // surface renders items.
+        let reachable = HierarchyRules.descendants(of: epic.id, in: live).map(\.id)
+        #expect(reachable.contains(subtask.id))
+
+        let restoreEvent = store.activity(for: project.id).last
+        #expect(restoreEvent?.kind == .itemRestored)
+        #expect(restoreEvent?.summary.contains("parent item(s)") == true)
+    }
+
     @Test("updateItem allows plain edits but enforces hierarchy rules on reparent/retype")
     func updateItemValidatesStructuralChanges() throws {
         let (store, project) = makeStore()

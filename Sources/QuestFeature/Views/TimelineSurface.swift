@@ -6,7 +6,7 @@ struct TimelineSurface: View {
     let theme: HostTheme
 
     private var layout: TimelineLayout.Result {
-        TimelineLayout.build(items: document.items, scheme: document.project.statusScheme)
+        TimelineLayout.build(items: document.items)
     }
 
     var body: some View {

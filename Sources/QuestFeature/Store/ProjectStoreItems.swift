@@ -145,13 +145,29 @@ extension ProjectStore {
         let descendantIDs = HierarchyRules.descendants(of: id, in: document.items)
             .filter { $0.deletedAt == targetDeletedAt }
             .map(\.id)
-        let affected = Set([id] + descendantIDs)
+        // Ancestors too. Restoring a child while its epic is still trashed
+        // would leave a live item whose parent is deleted: every surface
+        // renders epic → descendants, so it would appear on no list and count
+        // towards no rollup — live, invisible and unreachable.
+        var ancestorIDs: [UUID] = []
+        var cursor = document.items.first(where: { $0.id == id })?.parentID
+        var hops = 0
+        while let current = cursor, hops <= HierarchyRules.maxDepth {
+            guard let ancestor = document.items.first(where: { $0.id == current }) else { break }
+            if ancestor.isDeleted { ancestorIDs.append(ancestor.id) }
+            cursor = ancestor.parentID
+            hops += 1
+        }
+        let affected = Set([id] + descendantIDs + ancestorIDs)
         for position in document.items.indices where affected.contains(document.items[position].id) {
             document.items[position].deletedAt = nil
         }
+        let ancestorNote = ancestorIDs.isEmpty
+            ? ""
+            : " (including \(ancestorIDs.count) parent item(s), so it is reachable again)"
         document.activity.append(ActivityEvent(projectID: projectID, itemID: id, actor: actor,
                                                kind: .itemRestored,
-                                               summary: "restored \(affected.count) item(s)"))
+                                               summary: "restored \(affected.count) item(s)\(ancestorNote)"))
         commit(document)
     }
 

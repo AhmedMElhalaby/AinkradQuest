@@ -28,8 +28,8 @@ public final class DocumentProjectRepository: ProjectRepository {
         return summaries
     }
 
-    public func saveIndex(_ summaries: [ProjectSummary]) {
-        guard let data = try? encoder.encode(summaries) else { return }
+    public func saveIndex(_ summaries: [ProjectSummary]) throws {
+        let data = try encoder.encode(summaries)
         documents.setData(data, forKey: Self.indexKey)
     }
 
@@ -40,8 +40,8 @@ public final class DocumentProjectRepository: ProjectRepository {
         return document
     }
 
-    public func saveProject(_ document: ProjectDocument) {
-        guard let data = try? encoder.encode(document) else { return }
+    public func saveProject(_ document: ProjectDocument) throws {
+        let data = try encoder.encode(document)
         documents.setData(data, forKey: Self.projectKey(document.project.id))
     }
 
