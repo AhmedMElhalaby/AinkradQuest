@@ -25,8 +25,16 @@ public final class ProjectStore {
     public init(repository: any ProjectRepository) {
         self.repository = repository
         let index = repository.loadIndex()
-        let live = index.filter { !$0.isTrashed }
-        let trashed = index.filter { $0.isTrashed }
+        let live = index.filter { !$0.isTrashed }.map { summary -> ProjectSummary in
+            var summary = summary
+            summary.isTrashed = false
+            return summary
+        }
+        let trashed = index.filter { $0.isTrashed }.map { summary -> ProjectSummary in
+            var summary = summary
+            summary.isTrashed = true
+            return summary
+        }
         self.projects = live.filter { $0.state != .archived }
             + live.filter { $0.state == .archived }
         self.deletedProjectIDs = Set(trashed.map(\.id))
@@ -131,8 +139,17 @@ public final class ProjectStore {
         reloadTrash()
     }
 
+    /// `Project.summary` has no notion of trashedness — a project value does
+    /// not know whether the store considers it deleted — so the store stamps
+    /// `isTrashed = true` here. This is the only place `trashedProjects` is
+    /// built in memory; `saveIndex()` re-stamps on the way to disk too, which
+    /// is redundant with this but kept as belt-and-braces.
     private func reloadTrash() {
-        trashedProjects = deletedProjectIDs.compactMap { documents[$0]?.project.summary }
+        trashedProjects = deletedProjectIDs.compactMap { id -> ProjectSummary? in
+            guard var summary = documents[id]?.project.summary else { return nil }
+            summary.isTrashed = true
+            return summary
+        }
     }
 
     private func saveIndex() {

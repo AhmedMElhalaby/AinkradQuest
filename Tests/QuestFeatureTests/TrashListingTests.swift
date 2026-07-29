@@ -54,4 +54,46 @@ struct TrashListingTests {
 
         #expect(entries.isEmpty)
     }
+
+    // MARK: - through the real store
+
+    /// Hand-built `ProjectSummary(isTrashed: true)` fixtures (above) pass even
+    /// if the store never actually stamps `isTrashed` on its in-memory
+    /// `trashedProjects`. These tests go through a real `ProjectStore` so a
+    /// regression in that stamping — the store returning trashed summaries
+    /// with `isTrashed == false` — fails here even though the pure-helper
+    /// tests above would stay green.
+    @MainActor
+    @Test("a soft-deleted project's in-memory summary is stamped isTrashed, and its trashed item is labeled as such")
+    func realStoreStampsTrashedProjectSummary() throws {
+        let store = ProjectStore(repository: InMemoryProjectRepository())
+        let project = store.createProject(name: "Legacy", kind: .general, actor: .user)
+        let item = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                        title: "Old bug", statusID: "todo", actor: .user)
+
+        try store.deleteItem(item.id, actor: .user)
+        try store.deleteProject(project.id, actor: .user)
+
+        let trashed = try #require(store.trashedProjects.first { $0.id == project.id })
+        #expect(trashed.isTrashed == true)
+
+        let entries = TrashListing.itemEntries(projects: store.projects,
+                                               trashedProjects: store.trashedProjects,
+                                               allItems: store.allItems(in:))
+        let entry = try #require(entries.first { $0.id == item.id })
+        #expect(entry.label == "Legacy (trashed): Old bug")
+    }
+
+    @MainActor
+    @Test("the isTrashed stamp on a trashed project summary survives a relaunch")
+    func relaunchStampsTrashedProjectSummary() throws {
+        let repository = InMemoryProjectRepository()
+        let store = ProjectStore(repository: repository)
+        let project = store.createProject(name: "Legacy", kind: .general, actor: .user)
+        try store.deleteProject(project.id, actor: .user)
+
+        let relaunched = ProjectStore(repository: repository)
+        let trashed = try #require(relaunched.trashedProjects.first { $0.id == project.id })
+        #expect(trashed.isTrashed == true)
+    }
 }
