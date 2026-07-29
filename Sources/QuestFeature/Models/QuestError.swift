@@ -12,6 +12,7 @@ public enum QuestError: Error, Equatable, Sendable {
     case unknownStatus(String)
     case cyclicParent
     case linkNotFound(String)
+    case linkAlreadyExists(String)
 
     public var message: String {
         switch self {
@@ -25,6 +26,8 @@ public enum QuestError: Error, Equatable, Sendable {
         case .unknownStatus(let id): "Status '\(id)' is not in this project's status scheme."
         case .cyclicParent: "An item cannot be moved under its own descendant."
         case .linkNotFound(let id): "No link \(id) on that project or item."
+        case .linkAlreadyExists(let id):
+            "Link \(id) is already attached to that project or item."
         }
     }
 }

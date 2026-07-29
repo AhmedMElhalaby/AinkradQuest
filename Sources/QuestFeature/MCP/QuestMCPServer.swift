@@ -175,7 +175,8 @@ public enum QuestMCPServer {
                                 required: ["projectID"])),
 
         Tool("add_link", "addLink",
-             "Attach a link to a project or a work item. Give EITHER projectID or itemID. "
+             "Attach a link to a project or a work item. Give EITHER projectID or itemID; "
+             + "if you give both, itemID wins and the link goes on the item. "
              + "Links are how Quest points at the rest of your world: repos, branches, PRs, "
              + "commits, folders, files and URLs. A branch, pr or commit link MUST also name "
              + "its repo, because a project routinely has several.",
@@ -189,8 +190,10 @@ public enum QuestMCPServer {
              ], required: ["scheme", "identifier"])),
 
         Tool("remove_link", "removeLink",
-             "Remove a link from a project or a work item. Identify the link by the same "
-             + "scheme and identifier it was added with.",
+             "Remove a link from a project or a work item. Give EITHER projectID or itemID; "
+             + "if you give both, itemID wins. Identify the link by the same scheme, "
+             + "identifier AND repo it was added with — a branch link is identified by its "
+             + "repo as well, so 'main' in one repo is not 'main' in another.",
              schemaJSON: schema([
                 ("projectID", "string", "The project's UUID. Give this or itemID."),
                 ("itemID", "string", "The work item's UUID. Give this or projectID."),

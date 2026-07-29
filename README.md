@@ -44,7 +44,7 @@ project, since only epics may sit at the top level.
 
 ## MCP tools
 
-Quest publishes twelve tools over MCP (`QuestMCPServer.swift`), following the same
+Quest publishes fourteen tools over MCP (`QuestMCPServer.swift`), following the same
 declarative-table shape as Ainkrad's other plugin MCP servers. `update_status_scheme`
 does **not** exist — an earlier design mentioned it, but `QuestMCPOperations` has no
 operation to route it to, so it was deliberately left out rather than invented.
@@ -63,6 +63,8 @@ operation to route it to, so it was deliberately left out rather than invented.
 | `set_status` | | | Same. |
 | `delete_item` | ✓ | | Soft and restorable, but removing an item from every surface is disruptive enough — and the agent can't judge what a stale-looking item was for — that a person should agree first. |
 | `delete_project` | ✓ | | Same reasoning at project scope: removes a project and all of its work from every surface. |
+| `add_link` | | | Mutating but not destructive: attaching a reference adds information, is logged in the activity feed, and is undone by one `remove_link` with the same arguments. |
+| `remove_link` | | | Mutating but not destructive: it detaches a reference and erases no work, and is undone by one `add_link` with the same arguments. |
 
 `destructive` is what the host's Full-auto guard gates on; `requiresLiveApp` is false on
 every tool, since the store loads from `host.documents` and works whether or not a Quest

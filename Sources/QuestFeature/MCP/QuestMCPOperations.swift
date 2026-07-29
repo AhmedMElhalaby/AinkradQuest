@@ -198,16 +198,18 @@ public final class QuestMCPOperations {
         return success("Moved project \(id.uuidString) to trash. It can be restored from Quest.")
     }
 
+    // The assistant reads these messages verbatim, so they must name the TOOL it
+    // called (`add_link`), not the internal operation it routes to.
     private func addLink(_ json: [String: Any]) throws -> AgentActionResult {
-        let target = try linkTarget(json, operation: "addLink")
-        let link = try link(from: json, operation: "addLink")
+        let target = try linkTarget(json, operation: "add_link")
+        let link = try link(from: json, operation: "add_link")
         try store.addLink(to: target, link: link, actor: .agent)
         return success("Added \(link.scheme.rawValue) link \(link.label).")
     }
 
     private func removeLink(_ json: [String: Any]) throws -> AgentActionResult {
-        let target = try linkTarget(json, operation: "removeLink")
-        let link = try link(from: json, operation: "removeLink")
+        let target = try linkTarget(json, operation: "remove_link")
+        let link = try link(from: json, operation: "remove_link")
         try store.removeLink(from: target, link: link, actor: .agent)
         return success("Removed \(link.scheme.rawValue) link \(link.label).")
     }
@@ -216,12 +218,23 @@ public final class QuestMCPOperations {
 
     /// Resolves the project-or-item target, refusing trashed things through the
     /// same guards the other mutations use.
+    ///
+    /// `itemID` wins when both are given (documented in the tool descriptions).
+    /// A present-but-unparseable id is an ARGUMENT error, not "absent": falling
+    /// through to `projectID` would silently attach the link to the project
+    /// while the assistant believed it had attached it to the item.
     private func linkTarget(_ json: [String: Any], operation: String) throws -> LinkTarget {
-        if let raw = json["itemID"] as? String, let id = UUID(uuidString: raw) {
+        if let raw = json["itemID"] as? String {
+            guard let id = UUID(uuidString: raw) else {
+                throw ArgumentError(message: "\(operation): invalid argument 'itemID'")
+            }
             _ = try locateForMutation(id, operation: operation)
             return .item(id)
         }
-        if let raw = json["projectID"] as? String, let id = UUID(uuidString: raw) {
+        if let raw = json["projectID"] as? String {
+            guard let id = UUID(uuidString: raw) else {
+                throw ArgumentError(message: "\(operation): invalid argument 'projectID'")
+            }
             _ = try locateProjectForMutation(id, operation: operation)
             return .project(id)
         }

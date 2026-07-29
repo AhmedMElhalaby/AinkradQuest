@@ -36,6 +36,19 @@ struct ModelCodingTests {
         #expect(Project(id: UUID(), name: "B", kind: .general).statusScheme == .generalDefault)
     }
 
+    /// `Link.id` is derived from the stored fields, never written. That is what
+    /// makes changing its formula (to include the repo) a no-migration change:
+    /// no persisted document contains an `id` to become stale.
+    @Test("a link's id is computed, so it is never persisted")
+    func linkIDIsNotPersisted() throws {
+        let link = Link(scheme: .branch, identifier: "main", label: "main", repo: "alpha")
+        let json = try JSONSerialization.jsonObject(
+            with: try JSONEncoder().encode(link)) as? [String: Any]
+
+        #expect(json?["id"] == nil)
+        #expect(Set(json?.keys ?? [:].keys) == ["scheme", "identifier", "label", "repo"])
+    }
+
     @Test("a summary carries only what the index needs")
     func summary() {
         let project = Project(id: UUID(), name: "Ainkrad", kind: .software)

@@ -93,8 +93,16 @@ struct ProjectSidebar: View {
                     }
             }
             .scrollContentBackground(.hidden)
-            .onChange(of: filter) { clearSelectionIfHidden(from: visibleProjects) }
-            .onChange(of: store.projects) { clearSelectionIfHidden(from: visibleProjects) }
+            // Both handlers must test against the NEW value. `visibleProjects`
+            // above was computed during the PREVIOUS body pass, so closing over
+            // it tested the pre-change list and left, say, a paused project
+            // selected and rendered in the detail pane after All → Active.
+            .onChange(of: filter) { _, newFilter in
+                clearSelectionIfHidden(from: newFilter.apply(to: store.projects))
+            }
+            .onChange(of: store.projects) { _, newProjects in
+                clearSelectionIfHidden(from: filter.apply(to: newProjects))
+            }
 
             if let error {
                 Text(error)
@@ -129,6 +137,7 @@ struct ProjectSidebar: View {
         guard !name.isEmpty else { return }
         let project = store.createProject(name: name, kind: .software, actor: .user)
         newProjectName = ""
+        error = nil
         selection = project.id
         surface = .overview
     }
@@ -136,6 +145,9 @@ struct ProjectSidebar: View {
     private func setState(_ id: UUID, _ state: ProjectState) {
         do {
             try store.setState(id, state: state, actor: .user)
+            // Cleared on success, matching LinkEditor/LinkListView — otherwise
+            // one failure leaves a red line under the sidebar forever.
+            error = nil
         } catch let failure as QuestError {
             error = failure.message
         } catch {
@@ -147,6 +159,7 @@ struct ProjectSidebar: View {
         do {
             try store.deleteProject(id, actor: .user)
             if selection == id { selection = nil }
+            error = nil
         } catch let failure as QuestError {
             error = failure.message
         } catch {

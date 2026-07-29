@@ -13,7 +13,18 @@ public enum LinkScheme: String, Codable, Sendable, Hashable {
 }
 
 public struct Link: Codable, Sendable, Hashable, Identifiable {
-    public var id: String { "\(scheme.rawValue):\(identifier)" }
+    /// Identity INCLUDES the repo, because a project with eleven repos routinely
+    /// has `branch main` in several of them: without the repo those are one id,
+    /// and removing one deletes whichever the array happened to hold first.
+    /// Computed, never encoded (see `ModelCodingTests.linkIDIsNotPersisted`), so
+    /// changing this formula migrates no persisted document.
+    public var id: String {
+        if let repo, !repo.isEmpty {
+            "\(scheme.rawValue):\(repo)#\(identifier)"
+        } else {
+            "\(scheme.rawValue):\(identifier)"
+        }
+    }
     public var scheme: LinkScheme
     /// A path, URL, or repo-qualified reference. Repo-scoped schemes
     /// (`branch`, `pr`, `commit`) MUST carry their repo: a project with eleven
