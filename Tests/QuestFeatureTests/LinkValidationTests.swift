@@ -60,4 +60,20 @@ struct LinkValidationTests {
         #expect(link.label == "PR 42")
         #expect(link.repo == "optimus-api")
     }
+
+    @Test("a non-repo scheme never carries a repo even if one is supplied")
+    func stripsRepoForNonRepoSchemes() throws {
+        let link = try #require(LinkValidation.normalize(
+            scheme: .url, identifier: "https://example.com",
+            label: "Docs", repo: "quest").value)
+        #expect(link.repo == nil)
+    }
+
+    @Test("a commit link keeps its repo")
+    func commitKeepsRepo() throws {
+        let link = try #require(LinkValidation.normalize(
+            scheme: .commit, identifier: "7683373", label: "", repo: "quest").value)
+        #expect(link.repo == "quest")
+        #expect(link.label == "7683373")
+    }
 }

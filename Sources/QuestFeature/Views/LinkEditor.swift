@@ -34,7 +34,8 @@ public enum LinkValidation {
 
 struct LinkEditor: View {
     @Bindable var store: ProjectStore
-    let document: ProjectDocument
+    /// What this editor attaches to — a project or one work item.
+    let target: LinkTarget
     let theme: HostTheme
 
     @State private var scheme: LinkScheme = .repo
@@ -69,17 +70,78 @@ struct LinkEditor: View {
         case .invalid(let message):
             error = message
         case .valid(let link):
-            var project = document.project
-            project.links.append(link)
             do {
-                try store.updateProject(project, actor: .user, kind: .linkAdded,
-                                        summary: "added \(link.scheme.rawValue) link \(link.label)")
+                try store.addLink(to: target, link: link, actor: .user)
                 identifier = ""; label = ""; repo = ""; error = nil
             } catch let failure as QuestError {
                 error = failure.message
             } catch {
                 self.error = error.localizedDescription
             }
+        }
+    }
+}
+
+/// Renders a target's links with a remove control. Used by Overview (project
+/// links) and ItemEditor (item links) so the two cannot drift.
+struct LinkListView: View {
+    @Bindable var store: ProjectStore
+    let target: LinkTarget
+    let links: [Link]
+    let theme: HostTheme
+
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(links) { link in
+                HStack {
+                    Image(systemName: LinkSymbol.name(for: link.scheme))
+                    Text(link.label)
+                    if let repo = link.repo {
+                        Text(repo).font(.caption)
+                            .foregroundStyle(theme.tokens.foreground.opacity(0.6))
+                    }
+                    Spacer()
+                    Button {
+                        remove(link)
+                    } label: {
+                        Image(systemName: "minus.circle")
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            if let error {
+                Text(error).font(.caption).foregroundStyle(theme.statusColors.danger)
+            }
+        }
+        .foregroundStyle(theme.tokens.foreground)
+    }
+
+    private func remove(_ link: Link) {
+        do {
+            try store.removeLink(from: target, link: link, actor: .user)
+            error = nil
+        } catch let failure as QuestError {
+            error = failure.message
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
+
+/// The SF Symbol for a link kind, shared so Overview and ItemEditor agree.
+enum LinkSymbol {
+    static func name(for scheme: LinkScheme) -> String {
+        switch scheme {
+        case .repo: "shippingbox"
+        case .branch: "arrow.triangle.branch"
+        case .pr: "arrow.triangle.pull"
+        case .commit: "circle.dotted"
+        case .folder: "folder"
+        case .file: "doc"
+        case .url: "link"
+        case .unknown: "questionmark"
         }
     }
 }

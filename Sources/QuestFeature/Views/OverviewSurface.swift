@@ -15,17 +15,9 @@ struct OverviewSurface: View {
                 }
 
                 group("Links") {
-                    ForEach(document.project.links) { link in
-                        HStack {
-                            Image(systemName: symbol(for: link.scheme))
-                            Text(link.label)
-                            if let repo = link.repo {
-                                Text(repo).font(.caption)
-                                    .foregroundStyle(theme.tokens.foreground.opacity(0.6))
-                            }
-                        }
-                    }
-                    LinkEditor(store: store, document: document, theme: theme)
+                    LinkListView(store: store, target: .project(document.project.id),
+                                links: document.project.links, theme: theme)
+                    LinkEditor(store: store, target: .project(document.project.id), theme: theme)
                 }
 
                 group("Epics") {
@@ -62,19 +54,6 @@ struct OverviewSurface: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.headline).foregroundStyle(theme.tokens.accentPrimary)
             content()
-        }
-    }
-
-    private func symbol(for scheme: LinkScheme) -> String {
-        switch scheme {
-        case .repo: "shippingbox"
-        case .branch: "arrow.triangle.branch"
-        case .pr: "arrow.triangle.pull"
-        case .commit: "circle.dotted"
-        case .folder: "folder"
-        case .file: "doc"
-        case .url: "link"
-        case .unknown: "questionmark"
         }
     }
 }

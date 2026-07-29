@@ -44,6 +44,12 @@ struct ItemEditor: View {
                 Text(error).foregroundStyle(theme.statusColors.danger).font(.caption)
             }
 
+            Divider().overlay(theme.tokens.surface)
+            Text("Links").font(.headline).foregroundStyle(theme.tokens.accentPrimary)
+            LinkListView(store: store, target: .item(draft.id),
+                         links: currentLinks, theme: theme)
+            LinkEditor(store: store, target: .item(draft.id), theme: theme)
+
             HStack {
                 Button("Cancel") { dismiss() }
                 Spacer()
@@ -84,7 +90,19 @@ struct ItemEditor: View {
         }
     }
 
+    /// Read links from the STORE rather than the draft: the link editor commits
+    /// immediately through the store, while the rest of this sheet is a draft
+    /// saved on Save. Reading the draft would show stale links.
+    private var currentLinks: [Link] {
+        store.allItems(in: document.project.id).first { $0.id == draft.id }?.links ?? []
+    }
+
     private func save() {
+        // The link editor above already committed any link changes directly
+        // through the store. draft.links is stale from init time, so pull the
+        // store's current copy immediately before saving — otherwise this
+        // overwrite would silently delete links added since the sheet opened.
+        draft.links = currentLinks
         do {
             try store.updateItem(draft, actor: .user)
             dismiss()
