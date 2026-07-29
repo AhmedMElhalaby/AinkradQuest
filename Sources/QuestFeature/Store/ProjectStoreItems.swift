@@ -1,0 +1,140 @@
+import Foundation
+
+// MARK: - work items
+
+extension ProjectStore {
+    /// Live items only. Soft-deleted items are excluded from every surface.
+    public func items(in projectID: UUID) -> [WorkItem] {
+        (openProject(projectID)?.items ?? []).filter { !$0.isDeleted }
+    }
+
+    /// Including trashed ones — the trash view and restore path need these.
+    public func allItems(in projectID: UUID) -> [WorkItem] {
+        openProject(projectID)?.items ?? []
+    }
+
+    @discardableResult
+    public func createItem(projectID: UUID, parentID: UUID?, type: WorkItemType,
+                           title: String, statusID: String,
+                           actor: ActivityActor) throws -> WorkItem {
+        guard var document = openProject(projectID) else {
+            throw QuestError.projectNotFound(projectID)
+        }
+        guard document.project.statusScheme.status(id: statusID) != nil else {
+            throw QuestError.unknownStatus(statusID)
+        }
+        try HierarchyRules.validate(parentID: parentID, type: type,
+                                    movingItemID: nil, in: document.items)
+
+        let siblings = HierarchyRules.children(of: parentID, in: document.items)
+        let item = WorkItem(id: UUID(), projectID: projectID, parentID: parentID,
+                            type: type, title: title, statusID: statusID,
+                            orderIndex: (siblings.last?.orderIndex ?? -1) + 1)
+        document.items.append(item)
+        document.activity.append(ActivityEvent(projectID: projectID, itemID: item.id,
+                                               actor: actor, kind: .itemCreated,
+                                               summary: "created \(type.rawValue) \(title)"))
+        commit(document)
+        return item
+    }
+
+    public func updateItem(_ item: WorkItem, actor: ActivityActor) throws {
+        guard var document = openProject(item.projectID) else {
+            throw QuestError.projectNotFound(item.projectID)
+        }
+        guard let position = document.items.firstIndex(where: { $0.id == item.id }) else {
+            throw QuestError.itemNotFound(item.id)
+        }
+        guard document.project.statusScheme.status(id: item.statusID) != nil else {
+            throw QuestError.unknownStatus(item.statusID)
+        }
+        var updated = item
+        updated.updatedAt = Date()
+        document.items[position] = updated
+        document.activity.append(ActivityEvent(projectID: item.projectID, itemID: item.id,
+                                               actor: actor, kind: .itemUpdated,
+                                               summary: "updated \(item.title)"))
+        commit(document)
+    }
+
+    public func setStatus(_ id: UUID, statusID: String, actor: ActivityActor) throws {
+        guard let projectID = projectID(owning: id),
+              var document = openProject(projectID),
+              let position = document.items.firstIndex(where: { $0.id == id })
+        else { throw QuestError.itemNotFound(id) }
+        guard document.project.statusScheme.status(id: statusID) != nil else {
+            throw QuestError.unknownStatus(statusID)
+        }
+        document.items[position].statusID = statusID
+        document.items[position].updatedAt = Date()
+        // closedAt follows the CATEGORY, not the status name, so a custom
+        // "Shipped" status marked `.done` closes an item exactly like "Done".
+        document.items[position].closedAt =
+            document.project.statusScheme.isDone(statusID) ? Date() : nil
+        document.activity.append(
+            ActivityEvent(projectID: projectID, itemID: id, actor: actor,
+                          kind: .itemStatusChanged,
+                          summary: "\(document.items[position].title) → \(statusID)"))
+        commit(document)
+    }
+
+    public func moveItem(_ id: UUID, toParent parentID: UUID?, orderIndex: Int,
+                         actor: ActivityActor) throws {
+        guard let projectID = projectID(owning: id),
+              var document = openProject(projectID),
+              let position = document.items.firstIndex(where: { $0.id == id })
+        else { throw QuestError.itemNotFound(id) }
+
+        try HierarchyRules.validate(parentID: parentID, type: document.items[position].type,
+                                    movingItemID: id, in: document.items)
+        document.items[position].parentID = parentID
+        document.items[position].orderIndex = orderIndex
+        document.items[position].updatedAt = Date()
+        document.activity.append(ActivityEvent(projectID: projectID, itemID: id, actor: actor,
+                                               kind: .itemMoved,
+                                               summary: "moved \(document.items[position].title)"))
+        commit(document)
+    }
+
+    /// Soft, and it takes descendants with it — a hidden epic whose children
+    /// still appeared on the board would be worse than either outcome.
+    public func deleteItem(_ id: UUID, actor: ActivityActor) throws {
+        guard let projectID = projectID(owning: id), var document = openProject(projectID) else {
+            throw QuestError.itemNotFound(id)
+        }
+        let affected = Set([id] + HierarchyRules.descendants(of: id, in: document.items).map(\.id))
+        let stamp = Date()
+        for position in document.items.indices where affected.contains(document.items[position].id) {
+            document.items[position].deletedAt = stamp
+        }
+        document.activity.append(ActivityEvent(projectID: projectID, itemID: id, actor: actor,
+                                               kind: .itemDeleted,
+                                               summary: "moved \(affected.count) item(s) to trash"))
+        commit(document)
+    }
+
+    public func restoreItem(_ id: UUID, actor: ActivityActor) throws {
+        guard let projectID = projectID(owning: id), var document = openProject(projectID) else {
+            throw QuestError.itemNotFound(id)
+        }
+        let affected = Set([id] + HierarchyRules.descendants(of: id, in: document.items).map(\.id))
+        for position in document.items.indices where affected.contains(document.items[position].id) {
+            document.items[position].deletedAt = nil
+        }
+        document.activity.append(ActivityEvent(projectID: projectID, itemID: id, actor: actor,
+                                               kind: .itemRestored,
+                                               summary: "restored \(affected.count) item(s)"))
+        commit(document)
+    }
+
+    /// Which project holds `itemID`. Checks open documents first, then the index.
+    func projectID(owning itemID: UUID) -> UUID? {
+        for summary in projects + trashedProjects {
+            if let document = openProject(summary.id),
+               document.items.contains(where: { $0.id == itemID }) {
+                return summary.id
+            }
+        }
+        return nil
+    }
+}
