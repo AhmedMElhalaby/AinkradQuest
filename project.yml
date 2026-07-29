@@ -1,0 +1,68 @@
+name: AinkradQuest
+options:
+  bundleIdPrefix: com.ainkrad
+  deploymentTarget: { macOS: "14.0" }
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGNING_ALLOWED: NO
+    EAGER_LINKING: NO
+packages:
+  AinkradAppKit:
+    url: https://github.com/AhmedMElhalaby/AinkradAppKit
+    # Must be <= the revision the HOST embeds. A plugin built against a newer
+    # SDK than the host ships cannot resolve its symbols and dies at
+    # `Bundle.load()`. This is the host's current pin.
+    revision: d5d994bdd8e79d530410a1c370657fa593fa4ce6
+targets:
+  QuestFeature:
+    type: library.static
+    platform: macOS
+    sources: [Sources/QuestFeature]
+    dependencies:
+      - package: AinkradAppKit
+        embed: false
+  QuestPlugin:
+    type: bundle
+    platform: macOS
+    sources: [Sources/QuestPlugin]
+    postBuildScripts:
+      # Generate AinkradAPIVersion from the SDK this build linked,
+      # rather than trusting the hand-typed Info.plist value.
+      - script: '"$SRCROOT/scripts/stamp-api-version.sh"'
+        name: Stamp AinkradAPIVersion
+        # The plist is an INPUT, not an output: declaring it makes the build
+        # system order this phase after the task that copies it into the
+        # bundle. Without it the script races that copy and finds nothing.
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        # No outputs, so keep it running every build: the linked SDK revision
+        # can change generation without any source file changing.
+        basedOnDependencyAnalysis: false
+    dependencies:
+      - target: QuestFeature
+      - package: AinkradAppKit
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ainkrad.plugin.quest
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Sources/QuestPlugin/Info.plist
+        MACH_O_TYPE: mh_bundle
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+        OTHER_LDFLAGS: ["-lQuestFeature"]
+  QuestFeatureTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [Tests/QuestFeatureTests]
+    dependencies:
+      - target: QuestFeature
+      - package: AinkradAppKit
+schemes:
+  QuestPlugin:
+    build: { targets: { QuestPlugin: all, QuestFeatureTests: [test] } }
+    test:  { config: Debug, targets: [QuestFeatureTests] }
