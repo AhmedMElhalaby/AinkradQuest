@@ -38,6 +38,7 @@ public struct QuestRootView: View {
     @State private var surface: QuestSurface = .landing
     @State private var selectedProject: UUID?
     @State private var showingTrash = false
+    @State private var settingsProject: UUID?
 
     public init(store: ProjectStore, theme: HostTheme) {
         self.store = store
@@ -48,7 +49,7 @@ public struct QuestRootView: View {
         HStack(spacing: 0) {
             ProjectSidebar(store: store, theme: theme,
                            selection: $selectedProject, surface: $surface,
-                           showingTrash: $showingTrash)
+                           showingTrash: $showingTrash, settingsProject: $settingsProject)
                 .frame(width: 220)
             Divider().overlay(theme.tokens.surface)
             VStack(spacing: 0) {
@@ -62,6 +63,11 @@ public struct QuestRootView: View {
         .background(theme.tokens.background)
         .sheet(isPresented: $showingTrash) {
             TrashView(store: store, theme: theme)
+        }
+        .sheet(item: Binding(
+            get: { settingsProject.flatMap { store.openProject($0)?.project } },
+            set: { settingsProject = $0?.id })) { project in
+            ProjectSettingsSheet(store: store, project: project, theme: theme)
         }
     }
 
