@@ -29,4 +29,35 @@ struct LinkValidationTests {
             scheme: .folder, identifier: "~/Projects/quest", label: "", repo: nil).value)
         #expect(link.label == "~/Projects/quest")
     }
+
+    @Test("a whitespace-only repo is treated as missing for a repo-scoped scheme",
+          arguments: [LinkScheme.branch, .pr, .commit])
+    func whitespaceOnlyRepoRefused(scheme: LinkScheme) {
+        let result = LinkValidation.normalize(scheme: scheme, identifier: "main",
+                                              label: "main", repo: "   ")
+        #expect(result.isFailure)
+    }
+
+    @Test("a whitespace-only identifier is refused for a non-repo scheme")
+    func whitespaceOnlyIdentifierRefused() {
+        let result = LinkValidation.normalize(scheme: .file, identifier: "   \n",
+                                              label: "x", repo: nil)
+        #expect(result.isFailure)
+    }
+
+    @Test("a whitespace-only label falls back to the trimmed identifier")
+    func whitespaceOnlyLabelFallsBack() throws {
+        let link = try #require(LinkValidation.normalize(
+            scheme: .url, identifier: "  https://example.com  ", label: "   ", repo: nil).value)
+        #expect(link.label == "https://example.com")
+    }
+
+    @Test("a valid link's identifier, label, and repo come back trimmed")
+    func fieldsAreTrimmed() throws {
+        let link = try #require(LinkValidation.normalize(
+            scheme: .pr, identifier: "  42  ", label: "  PR 42  ", repo: "  optimus-api  ").value)
+        #expect(link.identifier == "42")
+        #expect(link.label == "PR 42")
+        #expect(link.repo == "optimus-api")
+    }
 }
