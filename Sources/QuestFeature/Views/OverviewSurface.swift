@@ -25,6 +25,7 @@ struct OverviewSurface: View {
                             }
                         }
                     }
+                    LinkEditor(store: store, document: document, theme: theme)
                 }
 
                 group("Epics") {

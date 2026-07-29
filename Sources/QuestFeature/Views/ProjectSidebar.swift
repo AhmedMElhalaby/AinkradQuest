@@ -6,18 +6,32 @@ struct ProjectSidebar: View {
     let theme: HostTheme
     @Binding var selection: UUID?
     @Binding var surface: QuestSurface
+    @Binding var showingTrash: Bool
 
     @State private var newProjectName = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button {
-                surface = .today
-            } label: {
-                Label(QuestSurface.today.title, systemImage: QuestSurface.today.icon)
+            HStack {
+                Button {
+                    surface = .today
+                } label: {
+                    Label(QuestSurface.today.title, systemImage: QuestSurface.today.icon)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(surface == .today ? theme.tokens.accentPrimary : theme.tokens.foreground)
+
+                Spacer()
+
+                Button {
+                    showingTrash = true
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(theme.tokens.foreground)
+                .help("Trash")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(surface == .today ? theme.tokens.accentPrimary : theme.tokens.foreground)
 
             Text("Projects")
                 .font(.caption)
