@@ -11,6 +11,7 @@ public enum QuestError: Error, Equatable, Sendable {
     case nonEpicMustHaveParent
     case unknownStatus(String)
     case cyclicParent
+    case linkNotFound(String)
 
     public var message: String {
         switch self {
@@ -23,6 +24,7 @@ public enum QuestError: Error, Equatable, Sendable {
         case .nonEpicMustHaveParent: "Only epics may sit at the top level of a project."
         case .unknownStatus(let id): "Status '\(id)' is not in this project's status scheme."
         case .cyclicParent: "An item cannot be moved under its own descendant."
+        case .linkNotFound(let id): "No link \(id) on that project or item."
         }
     }
 }
