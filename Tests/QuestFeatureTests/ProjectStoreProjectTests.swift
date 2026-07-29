@@ -152,4 +152,53 @@ struct ProjectStoreProjectTests {
 
         #expect(store.persistenceFailure == nil)
     }
+
+    @Test("a project can be paused and appears only in the paused list")
+    func pause() throws {
+        let store = ProjectStore(repository: InMemoryProjectRepository())
+        let project = store.createProject(name: "Later", kind: .general, actor: .user)
+
+        try store.setState(project.id, state: .paused, actor: .user)
+
+        #expect(store.activeProjects.isEmpty)
+        #expect(store.pausedProjects.map(\.name) == ["Later"])
+        #expect(store.projects.count == 1)
+        #expect(store.openProject(project.id)?.project.state == .paused)
+    }
+
+    @Test("state changes are logged with the actor")
+    func stateLogged() throws {
+        let store = ProjectStore(repository: InMemoryProjectRepository())
+        let project = store.createProject(name: "P", kind: .general, actor: .user)
+
+        try store.setState(project.id, state: .archived, actor: .agent)
+
+        let event = store.activity(for: project.id).last
+        #expect(event?.kind == .projectUpdated)
+        #expect(event?.actor == .agent)
+        #expect(store.archivedProjects.map(\.name) == ["P"])
+    }
+
+    @Test("state survives a relaunch")
+    func statePersists() throws {
+        let repository = InMemoryProjectRepository()
+        let store = ProjectStore(repository: repository)
+        let project = store.createProject(name: "P", kind: .general, actor: .user)
+        try store.setState(project.id, state: .paused, actor: .user)
+
+        let reopened = ProjectStore(repository: repository)
+        #expect(reopened.pausedProjects.map(\.name) == ["P"])
+    }
+
+    @Test("setting a project back to active clears an archive stamp")
+    func reactivate() throws {
+        let store = ProjectStore(repository: InMemoryProjectRepository())
+        let project = store.createProject(name: "P", kind: .general, actor: .user)
+        try store.setState(project.id, state: .archived, actor: .user)
+
+        try store.setState(project.id, state: .active, actor: .user)
+
+        #expect(store.activeProjects.map(\.name) == ["P"])
+        #expect(store.openProject(project.id)?.project.archivedAt == nil)
+    }
 }

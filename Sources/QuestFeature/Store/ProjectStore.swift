@@ -43,6 +43,13 @@ public final class ProjectStore {
 
     public var activeProjects: [ProjectSummary] { projects.filter { $0.state == .active } }
 
+    public func projects(inState state: ProjectState) -> [ProjectSummary] {
+        projects.filter { $0.state == state }
+    }
+
+    public var pausedProjects: [ProjectSummary] { projects(inState: .paused) }
+    public var archivedProjects: [ProjectSummary] { projects(inState: .archived) }
+
     // MARK: reading
 
     public func openProject(_ id: UUID) -> ProjectDocument? {
@@ -91,12 +98,21 @@ public final class ProjectStore {
     }
 
     public func archiveProject(_ id: UUID, actor: ActivityActor) throws {
+        try setState(id, state: .archived, actor: actor, summary: "archived project")
+    }
+
+    /// The general form of `archiveProject`, which stays as a convenience.
+    /// Pause exists in the model but had no way to be reached before this.
+    public func setState(_ id: UUID, state: ProjectState, actor: ActivityActor,
+                         summary: String? = nil) throws {
         guard var document = openProject(id) else { throw QuestError.projectNotFound(id) }
-        document.project.state = .archived
-        document.project.archivedAt = Date()
+        document.project.state = state
+        // archivedAt tracks the archived state rather than accumulating: a
+        // project brought back out of the archive is not still archived.
+        document.project.archivedAt = state == .archived ? Date() : nil
         document.activity.append(ActivityEvent(projectID: id, actor: actor,
                                                kind: .projectUpdated,
-                                               summary: "archived project"))
+                                               summary: summary ?? "set project state to \(state.rawValue)"))
         commit(document)
     }
 
