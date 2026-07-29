@@ -99,9 +99,9 @@ struct ProjectSettingsSheet: View {
                 }
             }
             // The kind picker only relabels the project; it does NOT change an
-            // existing project's status scheme. Schemes are fixed at creation
-            // and are not editable in this milestone — do not read this as a
-            // scheme switch.
+            // existing project's status scheme. Schemes ARE editable now, via
+            // the `StatusSchemeEditor` below — this picker still does not
+            // retroactively switch one.
             Picker("Kind", selection: $draft.kind) {
                 Text("Software").tag(ProjectKind.software)
                 Text("General").tag(ProjectKind.general)
@@ -109,6 +109,10 @@ struct ProjectSettingsSheet: View {
             if let error {
                 Text(error).font(.caption).foregroundStyle(theme.statusColors.danger)
             }
+
+            Divider().overlay(theme.tokens.surface)
+            StatusSchemeEditor(store: store, project: draft, theme: theme)
+
             HStack {
                 Button("Cancel") { dismiss() }
                 Spacer()
@@ -132,6 +136,15 @@ struct ProjectSettingsSheet: View {
             draft.name = name
         }
         draft.colorToken = colorToken.rawValue
+        // StatusSchemeEditor above applies scheme changes directly through the
+        // store on "Apply", immediately — unlike the rest of this sheet, which
+        // is draft-until-Save. `draft.statusScheme` is stale from init time, so
+        // pull the store's current copy right before saving, exactly as
+        // ItemEditor.save() does for links: otherwise this write would silently
+        // revert a scheme change the user already applied and confirmed.
+        if let current = store.openProject(draft.id)?.project.statusScheme {
+            draft.statusScheme = current
+        }
         do {
             try store.updateProject(draft, actor: .user)
             dismiss()

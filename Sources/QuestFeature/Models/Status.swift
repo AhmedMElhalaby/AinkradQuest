@@ -37,7 +37,7 @@ public struct StatusScheme: Codable, Sendable, Hashable {
     public static let softwareDefault = StatusScheme(statuses: [
         Status(id: "backlog", name: "Backlog", category: .todo, colorToken: "muted"),
         Status(id: "todo", name: "Todo", category: .todo, colorToken: "accentSecondary"),
-        Status(id: "in_progress", name: "In Progress", category: .active, colorToken: "accent"),
+        Status(id: "in_progress", name: "In Progress", category: .active, colorToken: "accentPrimary"),
         Status(id: "in_review", name: "In Review", category: .active, colorToken: "warning"),
         Status(id: "done", name: "Done", category: .done, colorToken: "success"),
     ])
