@@ -26,10 +26,14 @@ extension ProjectStore {
         try HierarchyRules.validate(parentID: parentID, type: type,
                                     movingItemID: nil, in: document.items)
 
-        let siblings = HierarchyRules.children(of: parentID, in: document.items)
+        // Includes soft-deleted siblings — one still holding a high orderIndex
+        // would otherwise collide with the new item once it's restored.
+        let siblingOrderIndexes = document.items
+            .filter { $0.parentID == parentID }
+            .map(\.orderIndex)
         let item = WorkItem(id: UUID(), projectID: projectID, parentID: parentID,
                             type: type, title: title, statusID: statusID,
-                            orderIndex: (siblings.last?.orderIndex ?? -1) + 1)
+                            orderIndex: (siblingOrderIndexes.max() ?? -1) + 1)
         document.items.append(item)
         document.activity.append(ActivityEvent(projectID: projectID, itemID: item.id,
                                                actor: actor, kind: .itemCreated,
@@ -47,6 +51,14 @@ extension ProjectStore {
         }
         guard document.project.statusScheme.status(id: item.statusID) != nil else {
             throw QuestError.unknownStatus(item.statusID)
+        }
+        let stored = document.items[position]
+        // parentID/type are mutable on WorkItem, so a caller could otherwise
+        // reparent or retype through updateItem and skip the depth/cycle/
+        // epic-at-root rules that createItem and moveItem enforce.
+        if item.parentID != stored.parentID || item.type != stored.type {
+            try HierarchyRules.validate(parentID: item.parentID, type: item.type,
+                                        movingItemID: item.id, in: document.items)
         }
         var updated = item
         updated.updatedAt = Date()
@@ -102,7 +114,14 @@ extension ProjectStore {
         guard let projectID = projectID(owning: id), var document = openProject(projectID) else {
             throw QuestError.itemNotFound(id)
         }
-        let affected = Set([id] + HierarchyRules.descendants(of: id, in: document.items).map(\.id))
+        // Only cascade onto descendants that are currently live — one already
+        // in the trash for its own reason keeps its own deletedAt, which is
+        // how restore later tells "deleted by this cascade" apart from
+        // "independently deleted".
+        let descendantIDs = HierarchyRules.descendants(of: id, in: document.items)
+            .filter { !$0.isDeleted }
+            .map(\.id)
+        let affected = Set([id] + descendantIDs)
         let stamp = Date()
         for position in document.items.indices where affected.contains(document.items[position].id) {
             document.items[position].deletedAt = stamp
@@ -117,7 +136,16 @@ extension ProjectStore {
         guard let projectID = projectID(owning: id), var document = openProject(projectID) else {
             throw QuestError.itemNotFound(id)
         }
-        let affected = Set([id] + HierarchyRules.descendants(of: id, in: document.items).map(\.id))
+        guard let targetDeletedAt = document.items.first(where: { $0.id == id })?.deletedAt else {
+            throw QuestError.itemNotFound(id)
+        }
+        // Only restore descendants deleted by the SAME cascade (matching
+        // deletedAt) — one deleted independently, earlier or later, stays
+        // in the trash.
+        let descendantIDs = HierarchyRules.descendants(of: id, in: document.items)
+            .filter { $0.deletedAt == targetDeletedAt }
+            .map(\.id)
+        let affected = Set([id] + descendantIDs)
         for position in document.items.indices where affected.contains(document.items[position].id) {
             document.items[position].deletedAt = nil
         }
