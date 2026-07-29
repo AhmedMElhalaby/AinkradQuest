@@ -68,4 +68,36 @@ struct ProjectStoreProjectTests {
         try store.restoreProject(project.id, actor: .user)
         #expect(store.projects.map(\.name) == ["Oops"])
     }
+
+    @Test("a soft-deleted project stays trashed across a relaunch")
+    func trashSurvivesRelaunch() throws {
+        let repository = InMemoryProjectRepository()
+        let store = ProjectStore(repository: repository)
+        let project = store.createProject(name: "Persisted Oops", kind: .general, actor: .agent)
+
+        try store.deleteProject(project.id, actor: .agent)
+
+        let relaunched = ProjectStore(repository: repository)
+        #expect(relaunched.projects.isEmpty)
+        #expect(relaunched.trashedProjects.map(\.name) == ["Persisted Oops"])
+
+        try relaunched.restoreProject(project.id, actor: .user)
+        #expect(relaunched.projects.map(\.name) == ["Persisted Oops"])
+    }
+
+    @Test("a failed save keeps the in-memory change and surfaces persistenceFailure")
+    func persistenceFailureSurfaces() {
+        let repository = FailingSaveProjectRepository()
+        let store = ProjectStore(repository: repository)
+
+        let project = store.createProject(name: "Unsaved", kind: .general, actor: .user)
+
+        #expect(store.projects.map(\.name) == ["Unsaved"])
+        #expect(store.persistenceFailure != nil)
+
+        repository.failSaves = false
+        try? store.updateProject(project, actor: .user)
+
+        #expect(store.persistenceFailure == nil)
+    }
 }

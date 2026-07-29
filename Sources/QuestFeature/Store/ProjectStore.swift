@@ -16,15 +16,21 @@ public final class ProjectStore {
 
     private let repository: any ProjectRepository
     /// Open documents, cached so repeated reads do not re-decode.
-    private var documents: [UUID: ProjectDocument] = [:]
-    private var deletedProjectIDs: Set<UUID> = []
+    /// `internal` (not `private`) so Task 7's item API, added as an
+    /// `extension ProjectStore` in another file in this module, can reach it.
+    var documents: [UUID: ProjectDocument] = [:]
+    /// `internal` for the same reason as `documents`.
+    var deletedProjectIDs: Set<UUID> = []
 
     public init(repository: any ProjectRepository) {
         self.repository = repository
         let index = repository.loadIndex()
-        self.projects = index.filter { $0.state != .archived }
-            + index.filter { $0.state == .archived }
-        reloadTrash()
+        let live = index.filter { !$0.isTrashed }
+        let trashed = index.filter { $0.isTrashed }
+        self.projects = live.filter { $0.state != .archived }
+            + live.filter { $0.state == .archived }
+        self.deletedProjectIDs = Set(trashed.map(\.id))
+        self.trashedProjects = trashed
     }
 
     public var activeProjects: [ProjectSummary] { projects.filter { $0.state == .active } }
@@ -130,7 +136,17 @@ public final class ProjectStore {
     }
 
     private func saveIndex() {
-        repository.saveIndex(projects + trashedProjects)
+        let liveEntries = projects.map { summary -> ProjectSummary in
+            var summary = summary
+            summary.isTrashed = false
+            return summary
+        }
+        let trashedEntries = trashedProjects.map { summary -> ProjectSummary in
+            var summary = summary
+            summary.isTrashed = true
+            return summary
+        }
+        repository.saveIndex(liveEntries + trashedEntries)
     }
 
     /// A failed write never drops the in-memory change: it is retried once and

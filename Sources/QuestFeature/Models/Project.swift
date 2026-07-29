@@ -52,9 +52,13 @@ public struct ProjectSummary: Codable, Sendable, Identifiable, Hashable {
     public var kind: ProjectKind
     public var state: ProjectState
     public var updatedAt: Date
+    /// Whether the store has moved this project to trash. Persisted in the
+    /// index so soft-deletes survive relaunch; decoded leniently so an index
+    /// written before this field existed still loads.
+    public var isTrashed: Bool
 
     public init(id: UUID, name: String, icon: String, colorToken: String,
-                kind: ProjectKind, state: ProjectState, updatedAt: Date) {
+                kind: ProjectKind, state: ProjectState, updatedAt: Date, isTrashed: Bool = false) {
         self.id = id
         self.name = name
         self.icon = icon
@@ -62,5 +66,22 @@ public struct ProjectSummary: Codable, Sendable, Identifiable, Hashable {
         self.kind = kind
         self.state = state
         self.updatedAt = updatedAt
+        self.isTrashed = isTrashed
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, icon, colorToken, kind, state, updatedAt, isTrashed
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        icon = try container.decode(String.self, forKey: .icon)
+        colorToken = try container.decode(String.self, forKey: .colorToken)
+        kind = try container.decode(ProjectKind.self, forKey: .kind)
+        state = try container.decode(ProjectState.self, forKey: .state)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        isTrashed = try container.decodeIfPresent(Bool.self, forKey: .isTrashed) ?? false
     }
 }
