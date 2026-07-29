@@ -7,9 +7,10 @@ public enum ActivityKind: String, Codable, Sendable {
     case itemCreated, itemUpdated, itemMoved, itemStatusChanged
     case itemDeleted, itemRestored
     /// Emitted by the store's link API for both projects and items.
-    /// `schemeUpdated` is still absent: no scheme editor ships, and an
-    /// unreachable case in the feed's switch is a claim the app cannot back up.
     case linkAdded, linkRemoved
+    /// Emitted by `ProjectStore.applyScheme` when a validated `SchemePlan.Plan`
+    /// is committed.
+    case schemeUpdated
 }
 
 /// Append-only. This is the record that makes full agent control livable: a bad

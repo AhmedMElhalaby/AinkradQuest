@@ -78,7 +78,7 @@ extension ProjectStore {
 
     /// Reads the store's OWNED trash set rather than deriving it, matching how
     /// `rebuildIndexEntry` maintains it.
-    private func isTrashed(_ projectID: UUID) -> Bool {
+    func isTrashed(_ projectID: UUID) -> Bool {
         deletedProjectIDs.contains(projectID)
     }
 }
