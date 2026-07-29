@@ -25,8 +25,13 @@ struct TimelineSurface: View {
                                 .lineLimit(1)
                                 .padding(.horizontal, 6)
                                 .frame(width: max(end - x, 60), height: 22, alignment: .leading)
-                                .background(theme.tokens.accentPrimary.opacity(0.35))
+                                .background(theme.tokens.accentPrimary.opacity(bar.isDerived ? 0.15 : 0.35))
                                 .clipShape(RoundedRectangle(cornerRadius: 4))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .strokeBorder(theme.tokens.accentPrimary.opacity(bar.isDerived ? 0.6 : 0),
+                                                      lineWidth: 1)
+                                )
                                 .offset(x: x, y: CGFloat(bar.lane) * 28)
                         }
                     }

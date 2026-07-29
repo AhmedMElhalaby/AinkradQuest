@@ -37,7 +37,7 @@ markdown about it.
 | Overview | `OverviewSurface.swift` | One project's summary — links, activity, epic progress. |
 | List | `ListSurface.swift` | Filterable, sortable flat list of items. |
 | Board | `BoardSurface.swift` | Drag-and-drop columns from the project's status scheme. Epics are containers, not board cards — every level below the epic is board-visible. |
-| Timeline | `TimelineSurface.swift` | Scheduled items laid out over time, with an unscheduled rail so anything without dates isn't lost. |
+| Timeline | `TimelineSurface.swift` | Scheduled items laid out over time, with an unscheduled rail so anything without dates isn't lost. An epic with its own dates keeps them; an epic with no dates but scheduled descendants spans earliest start to latest end (shown with a lighter fill and a thin border); an epic with neither stays on the unscheduled rail. |
 
 Quick capture files into an auto-created "Inbox" epic rather than directly under the
 project, since only epics may sit at the top level.
