@@ -145,6 +145,74 @@ struct QuestMCPOperationsTests {
         #expect(store.allItems(in: project.id)[0].statusID == "todo")
     }
 
+    @Test("create_item refuses a trashed parent — no live item under a deleted parent")
+    func createItemRefusesTrashedParent() async {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+        let epic = try! store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                         title: "E", statusID: "todo", actor: .user)
+        try! store.deleteItem(epic.id, actor: .user)
+
+        let result = await operations.run(
+            operation: "createItem",
+            arguments: #"{"projectID":"\#(project.id.uuidString)","parentID":"\#(epic.id.uuidString)","type":"task","title":"Orphan"}"#)
+
+        #expect(result.isError)
+        #expect(result.text.lowercased().contains("trash"))
+        #expect(result.text.contains("Restore"))
+        // Nothing was created: only the trashed epic exists.
+        #expect(store.allItems(in: project.id).map(\.title) == ["E"])
+    }
+
+    @Test("create_item refuses a trashed project — work cannot land where the user cannot see it")
+    func createItemRefusesTrashedProject() async {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+        try! store.deleteProject(project.id, actor: .user)
+
+        let result = await operations.run(
+            operation: "createItem",
+            arguments: #"{"projectID":"\#(project.id.uuidString)","type":"epic","title":"Hidden"}"#)
+
+        #expect(result.isError)
+        #expect(result.text.lowercased().contains("trash"))
+        #expect(result.text.contains("Restore"))
+        #expect(store.allItems(in: project.id).isEmpty)
+    }
+
+    @Test("update_project refuses a trashed project rather than succeeding silently")
+    func updateProjectRefusesTrashedProject() async {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+        try! store.deleteProject(project.id, actor: .user)
+
+        let result = await operations.run(
+            operation: "updateProject",
+            arguments: #"{"projectID":"\#(project.id.uuidString)","name":"Renamed"}"#)
+
+        #expect(result.isError)
+        #expect(result.text.lowercased().contains("trash"))
+        #expect(result.text.contains("Restore"))
+        #expect(store.trashedProjects.map(\.name) == ["P"])
+    }
+
+    @Test("get_project says so when the project is in the trash")
+    func getProjectReportsTrash() async {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+
+        let live = await operations.run(operation: "getProject",
+                                        arguments: #"{"projectID":"\#(project.id.uuidString)"}"#)
+        #expect(!live.isError)
+        #expect(!live.text.contains("IN TRASH"))
+
+        try! store.deleteProject(project.id, actor: .user)
+        let trashed = await operations.run(operation: "getProject",
+                                           arguments: #"{"projectID":"\#(project.id.uuidString)"}"#)
+        #expect(!trashed.isError)
+        #expect(trashed.text.contains("IN TRASH"))
+    }
+
     @Test("a missing required argument reports the argument name, not a fabricated item id")
     func missingArgumentIsNotMisreportedAsItemNotFound() async {
         let (operations, _) = makeSubject()

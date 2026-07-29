@@ -52,12 +52,18 @@ public final class QuestMCPOperations {
 
     private func getProject(_ json: [String: Any]) throws -> AgentActionResult {
         let id = try uuid(json, "projectID", operation: "getProject")
-        guard let document = store.openProject(id) else { throw QuestError.projectNotFound(id) }
+        let located = try locateProject(id)
+        let document = located.document
         let statuses = document.project.statusScheme.statuses.map(\.id).joined(separator: ", ")
         let items = document.items.filter { !$0.isDeleted }
             .map { describe($0, scheme: document.project.statusScheme) }
+        // Consistent with getItem: a read of a trashed thing is answered, but
+        // never answered as if it were live.
+        let trashNote = located.isTrashed
+            ? "\nIN TRASH: this project is in the trash\n"
+            : ""
         return success("""
-            \(document.project.name) [\(document.project.kind.rawValue)]
+            \(document.project.name) [\(document.project.kind.rawValue)]\(trashNote)
             statuses: \(statuses)
             links: \(document.project.links.map(\.label).joined(separator: ", "))
             items:
@@ -113,7 +119,7 @@ public final class QuestMCPOperations {
 
     private func updateProject(_ json: [String: Any]) throws -> AgentActionResult {
         let id = try uuid(json, "projectID", operation: "updateProject")
-        guard var document = store.openProject(id) else { throw QuestError.projectNotFound(id) }
+        var document = try locateProjectForMutation(id, operation: "updateProject").document
         if let name = json["name"] as? String { document.project.name = name }
         if let summary = json["summary"] as? String { document.project.summaryText = summary }
         try store.updateProject(document.project, actor: .agent)
@@ -126,6 +132,19 @@ public final class QuestMCPOperations {
         let type = WorkItemType(rawValue: json["type"] as? String ?? "task") ?? .task
         let title = json["title"] as? String ?? "Untitled"
         let statusID = json["statusID"] as? String ?? "todo"
+        let located = try locateProjectForMutation(projectID, operation: "createItem")
+        // A live child under a soft-deleted parent is exactly the orphan the
+        // restore-ancestors fix was raised to prevent: ListSurface renders
+        // epic → descendants, so it would show on no list and count towards
+        // no rollup. The store allows it (the parent still exists); the
+        // assistant must not ask for it.
+        if let parentID,
+           let parent = located.document.items.first(where: { $0.id == parentID }),
+           parent.isDeleted {
+            throw ArgumentError(message:
+                "createItem: the parent item \(parent.title) is in the trash. "
+                + "Restore it from Quest's Trash before filing work under it.")
+        }
         let item = try store.createItem(projectID: projectID, parentID: parentID, type: type,
                                         title: title, statusID: statusID, actor: .agent)
         return success("Created \(type.rawValue) \(item.title) (\(item.id.uuidString))")
@@ -176,6 +195,33 @@ public final class QuestMCPOperations {
     }
 
     // MARK: helpers
+
+    private struct LocatedProject {
+        let document: ProjectDocument
+        let isTrashed: Bool
+    }
+
+    /// The project-level counterpart of `locate`. `store.openProject` answers
+    /// for trashed projects too — it has to, so the trash view can render them
+    /// — which makes it this boundary's job to notice.
+    private func locateProject(_ id: UUID) throws -> LocatedProject {
+        guard let document = store.openProject(id) else { throw QuestError.projectNotFound(id) }
+        return LocatedProject(document: document,
+                              isTrashed: store.trashedProjects.contains { $0.id == id })
+    }
+
+    /// Refuses a write aimed at a trashed project. Creating or editing inside
+    /// one lands work where the user cannot see it, which is the same
+    /// invisible-orphan failure as mutating a soft-deleted item.
+    private func locateProjectForMutation(_ id: UUID, operation: String) throws -> LocatedProject {
+        let located = try locateProject(id)
+        if located.isTrashed {
+            throw ArgumentError(message:
+                "\(operation): project \(located.document.project.name) is in the trash. "
+                + "Restore it from Quest's Trash before modifying it.")
+        }
+        return located
+    }
 
     private struct LocatedItem {
         let projectID: UUID
