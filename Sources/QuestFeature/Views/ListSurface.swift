@@ -37,6 +37,7 @@ struct ListSurface: View {
     @State private var filter = ItemFilter()
     @State private var sort: ItemSort = .manual
     @State private var editing: WorkItem?
+    @Environment(\.questSurfaceModal) private var surfaceModal
     /// Which row is currently in inline title edit. Held here, not per row, so
     /// only one field is live at a time; the in-progress TEXT still lives in
     /// the row (see `ListRow`), so it can never leak between rows.
@@ -86,6 +87,9 @@ struct ListSurface: View {
                     .id(item.id)
             }
         }
+        // The editor is an overlay scoped to this pane, so the header above it
+        // stays live unless the shell is told to switch itself off.
+        .onChange(of: editing != nil) { _, isOpen in surfaceModal(isOpen) }
     }
 
     // MARK: - Query

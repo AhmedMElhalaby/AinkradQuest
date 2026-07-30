@@ -15,6 +15,10 @@ struct QuestHeader: View {
     /// The gear acts on the selected project, so it is withheld — not merely
     /// inert — when there is none.
     let showsSettings: Bool
+    /// False while anything is presented over the app. `.ainkradModal` is a
+    /// scoped overlay, so an editor put up by a surface does not cover this
+    /// row — the shell has to switch it off explicitly.
+    let actionsEnabled: Bool
     let onNew: () -> Void
     let onSettings: () -> Void
     let onTrash: () -> Void
@@ -46,6 +50,10 @@ struct QuestHeader: View {
         }
         .padding(.horizontal, AinkradSpacing.md)
         .padding(.vertical, AinkradSpacing.sm)
+        // Covers the search field and the tabs as well as the buttons: switching
+        // surface underneath an open editor would leave the editor floating over
+        // a pane that no longer owns it.
+        .disabled(!actionsEnabled)
         .animation(AinkradMotion.present, value: showsSwitcher)
         .animation(AinkradMotion.present, value: showsSettings)
     }

@@ -17,6 +17,7 @@ struct BoardSurface: View {
     /// `activeFilter`.
     @State private var filter = ItemFilter()
     @State private var editing: WorkItem?
+    @Environment(\.questSurfaceModal) private var surfaceModal
     @State private var groupByEpic = false
 
     /// Merged at read time, exactly as `ListSurface.activeFilter` does, so the
@@ -78,6 +79,9 @@ struct BoardSurface: View {
                     .id(item.id)
             }
         }
+        // The editor is an overlay scoped to this pane, so the header above it
+        // stays live unless the shell is told to switch itself off.
+        .onChange(of: editing != nil) { _, isOpen in surfaceModal(isOpen) }
     }
 
     private func columnStrip(_ columns: [BoardColumn]) -> some View {

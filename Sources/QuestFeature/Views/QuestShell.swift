@@ -31,6 +31,27 @@ public struct QuestShell: View {
     }
 }
 
+/// How a surface tells the shell it has put up its own scoped modal.
+///
+/// Same shape and the same reason as `QuestNewProjectAction`: `@Entry` cannot
+/// compare closures, so a bare `(Bool) -> Void` would invalidate every surface
+/// on each of the shell's body passes. Unlike that action there is no loud
+/// `unwired` default — a surface mounted outside the shell simply has no header
+/// to gate, and the no-op is the correct behaviour rather than a bug.
+struct QuestModalScopeAction: Equatable {
+    private let perform: (Bool) -> Void
+
+    init(_ perform: @escaping (Bool) -> Void) { self.perform = perform }
+
+    func callAsFunction(_ isOpen: Bool) { perform(isOpen) }
+
+    static func == (lhs: QuestModalScopeAction, rhs: QuestModalScopeAction) -> Bool { true }
+}
+
+extension EnvironmentValues {
+    @Entry var questSurfaceModal: QuestModalScopeAction = QuestModalScopeAction { _ in }
+}
+
 /// The shell proper. Owns selection state, routes sheets, and owns the single
 /// `report` path that will replace the per-view `@State var error: String?`
 /// scattered across four surfaces as those surfaces migrated (Tasks 8–13).
@@ -52,12 +73,28 @@ struct QuestShellContent: View {
     @State private var suggestionState: SuggestionSheetState?
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
+    /// Reported up by `ListSurface`/`BoardSurface`, whose item editors are
+    /// overlays scoped to the surface pane and so leave the header live.
+    @State private var surfaceModalOpen = false
 
     /// Resolves to the center that `.ainkradToastHost()` on `QuestShell`
     /// injected, because this view is that modifier's content.
     @Environment(\.ainkradToastCenter) private var toasts
 
     private var hasProject: Bool { selectedProject != nil }
+
+    /// True while the shell is presenting anything of its own. Listed rather
+    /// than derived, so adding a presentation without listing it here is a
+    /// visible omission in one place instead of a silent hole.
+    private var shellModalOpen: Bool {
+        showingNewProject || suggestionState != nil || showingCommands
+            || showingTrash || settingsProject != nil
+    }
+
+    private var globalActionsEnabled: Bool {
+        GlobalActionGate.globalActionsEnabled(surfaceModalOpen: surfaceModalOpen,
+                                              shellModalOpen: shellModalOpen)
+    }
 
     var body: some View {
         // `spacing: 0` is a structural absence of a gap, not a spacing value:
@@ -70,6 +107,10 @@ struct QuestShellContent: View {
                         showsSwitcher: SurfaceVisibility.showsSwitcher(hasProject: hasProject),
                         showsSettings: SurfaceVisibility
                             .showsProjectSettings(hasProject: hasProject),
+                        // `.ainkradModal` is a scoped overlay, so the header is
+                        // NOT covered by an editor a surface put up — without
+                        // this it stays clickable behind the scrim.
+                        actionsEnabled: globalActionsEnabled,
                         onNew: { newItemOrProject() },
                         onSettings: { settingsProject = selectedProject },
                         onTrash: { showingTrash = true })
@@ -109,6 +150,7 @@ struct QuestShellContent: View {
         // `.newProject`, the ⌘N chord and the header's "+" with no project
         // selected — flips this one flag, so none of them can drift.
         .environment(\.questNewProject, QuestNewProjectAction { showingNewProject = true })
+        .environment(\.questSurfaceModal, QuestModalScopeAction { surfaceModalOpen = $0 })
         .ainkradModal(isPresented: $showingNewProject) {
             NewProjectForm(store: store, documents: documents,
                            report: { report($0, status: $1) }) { created, suggestions in
@@ -264,6 +306,15 @@ struct QuestShellContent: View {
     }
 
     private func activate(_ id: String) {
+        // ⌘K must still CLOSE the command menu it opened — gating it outright
+        // would make the chord a one-way door, which reads as broken. Every
+        // other chord opens something, so behind a modal it must not fire: a
+        // scoped overlay leaves the whole key window listening.
+        if showingCommands, id == "commandMenu" {
+            showingCommands = false
+            return
+        }
+        guard globalActionsEnabled else { return }
         switch id {
         case "commandMenu": showingCommands.toggle()
         case "newProject": perform(.newProject)
