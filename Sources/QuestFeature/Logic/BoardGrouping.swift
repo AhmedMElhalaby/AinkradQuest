@@ -23,3 +23,31 @@ public enum BoardGrouping {
         }
     }
 }
+
+public struct BoardGroup: Sendable, Identifiable {
+    public var id: UUID { epic.id }
+    public let epic: WorkItem
+    public let columns: [BoardColumn]
+}
+
+extension BoardGrouping {
+    /// One group per live epic, each carrying the FULL column set for the
+    /// scheme — same reasoning as `columns(items:scheme:filter:)`: a column that
+    /// vanishes with its contents is useless as a drop target.
+    ///
+    /// Grouping is by owning EPIC, not by direct parent, so a subtask appears
+    /// beside its sibling item rather than in a group of its own. Epics
+    /// themselves are still excluded from the columns; they are the group
+    /// headers here.
+    public static func groupedByEpic(items: [WorkItem], scheme: StatusScheme,
+                                     filter: ItemFilter) -> [BoardGroup] {
+        let epics = items.filter { $0.type == .epic && !$0.isDeleted }
+            .sorted { $0.orderIndex < $1.orderIndex }
+        return epics.map { epic in
+            let descendants = HierarchyRules.descendants(of: epic.id, in: items)
+            return BoardGroup(epic: epic,
+                              columns: columns(items: descendants, scheme: scheme,
+                                               filter: filter))
+        }
+    }
+}

@@ -9,44 +9,70 @@ struct BoardSurface: View {
 
     @State private var filter = ItemFilter()
     @State private var editing: WorkItem?
+    @State private var groupByEpic = false
 
     var body: some View {
-        ScrollView(.horizontal) {
-            HStack(alignment: .top, spacing: 12) {
-                ForEach(BoardGrouping.columns(items: document.items,
-                                              scheme: document.project.statusScheme,
-                                              filter: filter)) { column in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(column.status.name)
-                            .font(.headline)
-                            .foregroundStyle(theme.tokens.foreground)
-                        ForEach(column.items) { item in
-                            card(item)
-                                .draggable(item.id.uuidString)
+        VStack(alignment: .leading, spacing: 0) {
+            Toggle("Group by epic", isOn: $groupByEpic)
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+            ScrollView(.horizontal) {
+                if groupByEpic {
+                    VStack(alignment: .leading, spacing: 16) {
+                        ForEach(BoardGrouping.groupedByEpic(items: document.items,
+                                                            scheme: document.project.statusScheme,
+                                                            filter: filter)) { group in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(group.epic.title)
+                                    .font(.title3)
+                                    .foregroundStyle(theme.tokens.foreground)
+                                columnStrip(group.columns)
+                            }
                         }
-                        Spacer(minLength: 0)
                     }
-                    .frame(width: 240)
-                    .padding(8)
-                    .background(theme.tokens.surface)
-                    .dropDestination(for: String.self) { payload, _ in
-                        guard let raw = payload.first, let id = UUID(uuidString: raw) else {
-                            return false
-                        }
-                        // A rejected status (not in this project's scheme) is
-                        // impossible here — the column came from the scheme —
-                        // so a throw means a genuinely missing item.
-                        do {
-                            try store.setStatus(id, statusID: column.status.id, actor: .user)
-                            return true
-                        } catch { return false }
-                    }
+                    .padding(12)
+                } else {
+                    columnStrip(BoardGrouping.columns(items: document.items,
+                                                      scheme: document.project.statusScheme,
+                                                      filter: filter))
+                        .padding(12)
                 }
             }
-            .padding(12)
         }
         .sheet(item: $editing) { item in
             ItemEditor(store: store, document: document, item: item, theme: theme)
+        }
+    }
+
+    private func columnStrip(_ columns: [BoardColumn]) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            ForEach(columns) { column in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(column.status.name)
+                        .font(.headline)
+                        .foregroundStyle(theme.tokens.foreground)
+                    ForEach(column.items) { item in
+                        card(item)
+                            .draggable(item.id.uuidString)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(width: 240)
+                .padding(8)
+                .background(theme.tokens.surface)
+                .dropDestination(for: String.self) { payload, _ in
+                    guard let raw = payload.first, let id = UUID(uuidString: raw) else {
+                        return false
+                    }
+                    // A rejected status (not in this project's scheme) is
+                    // impossible here — the column came from the scheme —
+                    // so a throw means a genuinely missing item.
+                    do {
+                        try store.setStatus(id, statusID: column.status.id, actor: .user)
+                        return true
+                    } catch { return false }
+                }
+            }
         }
     }
 
