@@ -161,6 +161,22 @@ struct AttachmentPicker: View {
         // No padding here: `.ainkradModal` already insets its content by
         // `AinkradSpacing.lg` before capping the width, so a second inset
         // would double it and push the card toward that cap.
+        //
+        // `AinkradButton` binds no keys, so without this Return did nothing at
+        // all in this picker — there is no text field here to give it a
+        // meaning. Found by the source invariant, not by anyone using it.
+        .background(defaultActionAttach)
+    }
+
+    /// Return attaches what is checked, matching every other primary action in
+    /// the app. Checking nothing and pressing Return is harmless: `attachChecked`
+    /// attaches an empty set and finishes, which is what Skip does.
+    private var defaultActionAttach: some View {
+        Button("") { attachChecked() }
+            .keyboardShortcut(.defaultAction)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
     }
 
     private func isChecked(_ suggestion: AttachmentSuggestion) -> Binding<Bool> {
