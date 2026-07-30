@@ -39,9 +39,18 @@ struct TrashView: View {
     /// view — owns closing it.
     let onClose: () -> Void
 
-    /// The project awaiting an irreversible purge. Non-nil only while the
-    /// confirm dialog is up.
-    @State private var pendingPurge: UUID?
+    /// What is awaiting an irreversible purge. One piece of state for all three
+    /// destructive paths, so two confirm dialogs can never be up at once —
+    /// `.ainkradConfirmDialog` scopes its scrim to the view it modifies, and
+    /// stacked scrims over one 440pt panel would leave the user unable to tell
+    /// which question they are answering.
+    @State private var pendingPurge: PendingPurge?
+
+    enum PendingPurge: Equatable {
+        case project(UUID)
+        case item(UUID)
+        case everything
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AinkradSpacing.md) {
@@ -94,21 +103,53 @@ struct TrashView: View {
                               // action in the app, and "this project" does not
                               // tell you WHICH row's Delete you pressed.
                               message: purgeMessage,
-                              confirmTitle: "Delete",
+                              confirmTitle: confirmTitle,
                               isDestructive: true) {
-            if let id = pendingPurge { purgeProject(id) }
+            switch pendingPurge {
+            case .project(let id): purgeProject(id)
+            case .item(let id): purgeItem(id)
+            case .everything: emptyTrash()
+            case nil: break
+            }
             pendingPurge = nil
         }
     }
 
-    /// Falls back to the unnamed wording only if the summary has vanished from
+    private var confirmTitle: String {
+        pendingPurge == .everything ? "Delete all" : "Delete"
+    }
+
+    /// Falls back to the unnamed wording only if the row has vanished from
     /// under the dialog, which the confirm path never expects.
     private var purgeMessage: String {
-        let name = pendingPurge.flatMap { id in store.trashedProjects.first { $0.id == id }?.name }
-        guard let name else {
-            return "This project and everything in it will be gone for good. This cannot be undone."
+        switch pendingPurge {
+        case .project(let id):
+            guard let name = store.trashedProjects.first(where: { $0.id == id })?.name else {
+                return "This project and everything in it will be gone for good. This cannot be undone."
+            }
+            return "“\(name)” and everything in it will be gone for good. This cannot be undone."
+        case .item(let id):
+            guard let entry = itemEntries.first(where: { $0.id == id }) else {
+                return "This item will be gone for good. This cannot be undone."
+            }
+            // Says the part that is not on screen: the row shows one title, but
+            // a trashed epic takes its whole subtree with it.
+            return "“\(entry.label)” and anything filed under it will be gone for good. "
+                + "This cannot be undone."
+        case .everything:
+            return TrashPurge.confirmMessage(purgeEverythingPlan)
+        case nil:
+            return ""
         }
-        return "“\(name)” and everything in it will be gone for good. This cannot be undone."
+    }
+
+    /// Computed for the DIALOG's wording from the same inputs the store will
+    /// re-plan from, so the counts the user agrees to are the counts that get
+    /// destroyed.
+    private var purgeEverythingPlan: TrashPurgePlan {
+        TrashPurge.plan(liveProjectIDs: store.projects.map(\.id),
+                        trashedProjectIDs: store.trashedProjects.map(\.id),
+                        trashedItemIDs: { store.allItems(in: $0).filter(\.isDeleted).map(\.id) })
     }
 
     private var header: some View {
@@ -116,6 +157,15 @@ struct TrashView: View {
             AinkradSectionHeader(title: "Trash",
                                  subtitle: "Restore an item, or delete it permanently.")
                 .frame(maxWidth: .infinity, alignment: .leading)
+            // `.danger`, not `.primary`, and so deliberately WITHOUT a
+            // `.defaultAction`: nothing here should be reachable by pressing
+            // Return. Hidden entirely when there is nothing to empty, rather
+            // than disabled — a dimmed button still invites a click.
+            if !purgeEverythingPlan.isEmpty {
+                AinkradButton(title: "Empty trash", style: .danger) {
+                    pendingPurge = .everything
+                }
+            }
             AinkradIconButton(systemName: "xmark", action: onClose)
                 .help("Close")
                 .accessibilityLabel("Close")
@@ -134,7 +184,7 @@ struct TrashView: View {
                                // Opens the confirm dialog rather than purging:
                                // the destructive half never fires from one tap.
                                AinkradButton(title: "Delete", style: .danger) {
-                                   pendingPurge = project.id
+                                   pendingPurge = .project(project.id)
                                }
                            }
                        })
@@ -145,8 +195,16 @@ struct TrashView: View {
                        title: entry.label,
                        subtitle: "Work item",
                        trailing: {
-                           AinkradButton(title: "Restore", style: .secondary) {
-                               restoreItem(entry.id)
+                           HStack(spacing: AinkradSpacing.xs) {
+                               AinkradButton(title: "Restore", style: .secondary) {
+                                   restoreItem(entry.id)
+                               }
+                               // Matches the project row exactly: the confirm
+                               // dialog is the only route to the destructive
+                               // half, never a single tap.
+                               AinkradButton(title: "Delete", style: .danger) {
+                                   pendingPurge = .item(entry.id)
+                               }
                            }
                        })
     }
@@ -177,6 +235,19 @@ struct TrashView: View {
         let name = store.trashedProjects.first { $0.id == id }?.name
         run { try store.purgeProject(id) }
             ok: { report(name.map { "Deleted \($0) permanently." } ?? "Deleted permanently.", .neutral) }
+    }
+
+    private func purgeItem(_ id: UUID) {
+        run { try store.purgeItem(id, actor: .user) }
+            ok: { report("Deleted permanently.", .neutral) }
+    }
+
+    /// Reports through the same toast path whether it fully succeeded or not:
+    /// `emptyTrash` does not throw, because a partial empty is a real outcome
+    /// that has to be described rather than swallowed.
+    private func emptyTrash() {
+        let outcome = store.emptyTrash(actor: .user)
+        report(outcome.message, outcome.failures.isEmpty ? .neutral : .danger)
     }
 
     private func run(_ work: () throws -> Void, ok: () -> Void) {

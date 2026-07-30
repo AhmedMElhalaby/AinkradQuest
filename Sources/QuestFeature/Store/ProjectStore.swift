@@ -170,6 +170,50 @@ public final class ProjectStore {
         bumpRevision()
     }
 
+    /// Empties the trash: every trashed item, then every trashed project.
+    ///
+    /// The plan is computed BEFORE anything is destroyed (see `TrashPurge`),
+    /// because purging a project takes its document — and so its trashed items
+    /// — with it. Resolving items as it went would either count them twice or
+    /// fail with `itemNotFound` partway through.
+    ///
+    /// Does not throw. Each purge is an independent write, and stopping at the
+    /// first failure would leave the trash half-emptied with no report of what
+    /// remains — the one outcome the user cannot make sense of afterwards.
+    @discardableResult
+    public func emptyTrash(actor: ActivityActor) -> TrashPurgeOutcome {
+        let plan = TrashPurge.plan(
+            liveProjectIDs: projects.map(\.id),
+            trashedProjectIDs: trashedProjects.map(\.id),
+            trashedItemIDs: { allItems(in: $0).filter(\.isDeleted).map(\.id) })
+
+        var purgedItems = 0
+        var purgedProjects = 0
+        var failures: [String] = []
+        for id in plan.itemIDs {
+            do {
+                try purgeItem(id, actor: actor)
+                purgedItems += 1
+            } catch {
+                // A purge that cascaded onto this id already removed it, which
+                // is success for the user's purposes, not a failure worth
+                // reporting: an epic and its child are both listed in the trash.
+                if case QuestError.itemNotFound = error { continue }
+                failures.append((error as? QuestError)?.message ?? error.localizedDescription)
+            }
+        }
+        for id in plan.projectIDs {
+            do {
+                try purgeProject(id)
+                purgedProjects += 1
+            } catch {
+                failures.append((error as? QuestError)?.message ?? error.localizedDescription)
+            }
+        }
+        return TrashPurgeOutcome(purgedItems: purgedItems, purgedProjects: purgedProjects,
+                                 failures: failures)
+    }
+
     // MARK: internals
 
     /// Writes the document and refreshes the index entry derived from it.

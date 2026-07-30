@@ -21,6 +21,9 @@ public enum QuestError: Error, Equatable, Sendable {
     /// A permanent delete was asked for on something that is not in the trash.
     /// Purge is irreversible, so it refuses rather than deleting a live project.
     case projectNotInTrash(UUID)
+    /// The item equivalent. Same reasoning: a purge that would accept a live
+    /// item is one mis-passed id away from destroying work nobody deleted.
+    case itemNotInTrash(UUID)
 
     public var message: String {
         switch self {
@@ -47,6 +50,8 @@ public enum QuestError: Error, Equatable, Sendable {
             "Link \(id) is already attached to that project or item."
         case .projectNotInTrash(let id):
             "Project \(id) is not in the trash, so there is nothing to delete permanently."
+        case .itemNotInTrash(let id):
+            "Work item \(id) is not in the trash, so there is nothing to delete permanently."
         }
     }
 }

@@ -171,6 +171,41 @@ extension ProjectStore {
         commit(document)
     }
 
+    /// Hard. The other half of `deleteItem`, and the counterpart to
+    /// `purgeProject`: the item is removed from the document outright.
+    ///
+    /// Descendants go too, in ANY state — including one trashed separately and
+    /// one still live (which cannot happen through `deleteItem`'s cascade, but
+    /// can through a direct MCP call). Leaving one behind gives it a `parentID`
+    /// pointing at nothing, and `restoreItem` already documents what that
+    /// produces: every surface renders epic → descendants, so the survivor
+    /// would be live, invisible, and unreachable. A dangling child is a worse
+    /// outcome than deleting a little more than was asked for, and the parent
+    /// was in the trash either way.
+    ///
+    /// Links need no cleanup: they are stored ON the item (`WorkItem.links`)
+    /// and leave with it.
+    public func purgeItem(_ id: UUID, actor: ActivityActor) throws {
+        guard let projectID = projectID(owning: id), var document = openProject(projectID) else {
+            throw QuestError.itemNotFound(id)
+        }
+        guard let item = document.items.first(where: { $0.id == id }), item.isDeleted else {
+            throw QuestError.itemNotInTrash(id)
+        }
+        let descendantIDs = HierarchyRules.descendants(of: id, in: document.items).map(\.id)
+        let affected = Set([id] + descendantIDs)
+        document.items.removeAll { affected.contains($0.id) }
+        // The activity event outlives the item it names, so it carries the
+        // title: `itemID` now resolves to nothing, and "deleted an item" with
+        // no name makes the feed useless exactly where it matters most.
+        document.activity.append(ActivityEvent(projectID: projectID, itemID: id, actor: actor,
+                                               kind: .itemDeleted,
+                                               summary: "permanently deleted \(item.title)"
+                                                   + (descendantIDs.isEmpty ? ""
+                                                      : " and \(descendantIDs.count) item(s) under it")))
+        commit(document)
+    }
+
     /// Which project holds `itemID`. Checks open documents first, then the index.
     func projectID(owning itemID: UUID) -> UUID? {
         for summary in projects + trashedProjects {
