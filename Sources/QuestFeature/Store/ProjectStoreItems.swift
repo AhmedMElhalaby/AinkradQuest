@@ -16,7 +16,8 @@ extension ProjectStore {
     @discardableResult
     public func createItem(projectID: UUID, parentID: UUID?, type: WorkItemType,
                            title: String, statusID: String,
-                           actor: ActivityActor) throws -> WorkItem {
+                           actor: ActivityActor,
+                           role: WorkItemRole? = nil) throws -> WorkItem {
         guard var document = openProject(projectID) else {
             throw QuestError.projectNotFound(projectID)
         }
@@ -33,7 +34,8 @@ extension ProjectStore {
             .map(\.orderIndex)
         let item = WorkItem(id: UUID(), projectID: projectID, parentID: parentID,
                             type: type, title: title, statusID: statusID,
-                            orderIndex: (siblingOrderIndexes.max() ?? -1) + 1)
+                            orderIndex: (siblingOrderIndexes.max() ?? -1) + 1,
+                            role: role)
         document.items.append(item)
         document.activity.append(ActivityEvent(projectID: projectID, itemID: item.id,
                                                actor: actor, kind: .itemCreated,
@@ -168,6 +170,25 @@ extension ProjectStore {
         document.activity.append(ActivityEvent(projectID: projectID, itemID: id, actor: actor,
                                                kind: .itemRestored,
                                                summary: "restored \(affected.count) item(s)\(ancestorNote)"))
+        commit(document)
+    }
+
+    /// Stamps a role onto an existing item. Its only caller today is Inbox
+    /// adoption: an epic written before `WorkItemRole` existed is recognised by
+    /// title once, then marked, so it survives being renamed thereafter.
+    ///
+    /// Not routed through `updateItem`, which would require the caller to hold
+    /// and round-trip a whole `WorkItem` — and would log an `itemUpdated` event
+    /// for something the user did not do. Adoption is bookkeeping, so it is
+    /// deliberately silent in the activity feed.
+    public func setRole(_ role: WorkItemRole?, on id: UUID) throws {
+        guard let projectID = projectID(owning: id), var document = openProject(projectID) else {
+            throw QuestError.itemNotFound(id)
+        }
+        guard let position = document.items.firstIndex(where: { $0.id == id }) else {
+            throw QuestError.itemNotFound(id)
+        }
+        document.items[position].role = role
         commit(document)
     }
 

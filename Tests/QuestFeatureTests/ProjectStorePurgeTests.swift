@@ -114,6 +114,25 @@ struct ProjectStorePurgeTests {
         #expect(store.allItems(in: project.id).isEmpty)
     }
 
+    @Test("setRole stamps an existing item without logging it as a user edit")
+    func setRole() throws {
+        let store = makeStore()
+        let (project, epic) = try projectWithEpic(store)
+        let before = store.activity(for: project.id).count
+
+        try store.setRole(.inbox, on: epic.id)
+
+        #expect(store.allItems(in: project.id).first?.role == .inbox)
+        // Adoption is bookkeeping, not something the user did.
+        #expect(store.activity(for: project.id).count == before)
+    }
+
+    @Test("setRole on an unknown item throws")
+    func setRoleUnknown() {
+        let store = makeStore()
+        #expect(throws: QuestError.self) { try store.setRole(.inbox, on: UUID()) }
+    }
+
     @Test("emptying an already-empty trash destroys nothing and reports nothing")
     func emptyTrashOnEmpty() throws {
         let store = makeStore()

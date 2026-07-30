@@ -11,18 +11,27 @@ import Foundation
 /// writes. Creation is the caller's job because only it holds the store and
 /// the project's opening status.
 public enum InboxEpic {
-    /// The marker is the epic's title, for now. Renaming the epic therefore
-    /// makes the next capture create a second "Inbox" — accepted deliberately;
-    /// a real marker field on `WorkItem` is the follow-up.
+    /// The title given to an Inbox this app creates, and the fallback used to
+    /// recognise one written before `WorkItemRole` existed. It is no longer the
+    /// marker — `role == .inbox` is — so renaming the Inbox now keeps it the
+    /// Inbox instead of silently spawning a second one on the next capture.
     public static let title = "Inbox"
 
     public enum Resolution: Equatable, Sendable {
-        /// File under this existing, live Inbox epic.
+        /// File under this existing, live, marked Inbox epic.
         case existing(UUID)
+        /// A pre-marker Inbox, recognised by title alone. The caller files under
+        /// it AND stamps the role, so this is the last time that document is
+        /// identified by a string the user is free to change.
+        ///
+        /// Adoption is lazy rather than a migration pass at load: a bulk rewrite
+        /// would touch documents the user never opened, and a persist failure
+        /// there would surface with no action to attach it to.
+        case adopt(UUID)
         /// No live Inbox epic exists — the caller must create one titled
-        /// `InboxEpic.title` at the root. Never "use whatever epic sorts
-        /// first": that puts the item somewhere the user did not choose and
-        /// would not think to look.
+        /// `InboxEpic.title` at the root, marked `.inbox`. Never "use whatever
+        /// epic sorts first": that puts the item somewhere the user did not
+        /// choose and would not think to look.
         case create
     }
 
@@ -31,7 +40,11 @@ public enum InboxEpic {
     /// swallowing new captures.
     public static func resolve(in items: [WorkItem]) -> Resolution {
         let epics = items.filter { $0.type == .epic && !$0.isDeleted }
-        if let inbox = epics.first(where: { $0.title == title }) { return .existing(inbox.id) }
+        // The marker wins over the title, always — including when some OTHER
+        // epic has since been renamed to "Inbox". A rename of a real epic must
+        // not hijack where captures land.
+        if let marked = epics.first(where: { $0.role == .inbox }) { return .existing(marked.id) }
+        if let byTitle = epics.first(where: { $0.title == title }) { return .adopt(byTitle.id) }
         return .create
     }
 }

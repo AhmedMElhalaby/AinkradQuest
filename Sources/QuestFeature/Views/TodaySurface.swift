@@ -220,9 +220,15 @@ struct TodaySurface: View {
         switch InboxEpic.resolve(in: store.allItems(in: projectID)) {
         case .existing(let id):
             return id
+        case .adopt(let id):
+            // Pre-marker document: mark it now, so this is the last capture
+            // that depended on the epic still being called "Inbox".
+            try store.setRole(.inbox, on: id)
+            return id
         case .create:
             return try store.createItem(projectID: projectID, parentID: nil, type: .epic,
-                                        title: InboxEpic.title, statusID: statusID, actor: .user).id
+                                        title: InboxEpic.title, statusID: statusID,
+                                        actor: .user, role: .inbox).id
         }
     }
 

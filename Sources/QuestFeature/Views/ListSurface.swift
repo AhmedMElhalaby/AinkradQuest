@@ -275,9 +275,15 @@ struct ListSurface: View {
         switch InboxEpic.resolve(in: document.items) {
         case .existing(let id):
             return id
+        case .adopt(let id):
+            // Pre-marker document: mark it now, so this is the last add that
+            // depended on the epic still being called "Inbox".
+            try store.setRole(.inbox, on: id)
+            return id
         case .create:
             return try store.createItem(projectID: document.project.id, parentID: nil, type: .epic,
-                                        title: InboxEpic.title, statusID: statusID, actor: .user).id
+                                        title: InboxEpic.title, statusID: statusID,
+                                        actor: .user, role: .inbox).id
         }
     }
 }
