@@ -89,19 +89,30 @@ struct LinkListView: View {
     let target: LinkTarget
     let links: [Link]
     let theme: HostTheme
+    var opener: any LinkOpener = WorkspaceLinkOpener()
 
     @State private var error: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(links) { link in
+                let inert = isInert(link)
                 HStack {
-                    Image(systemName: LinkSymbol.name(for: link.scheme))
-                    Text(link.label)
-                    if let repo = link.repo {
-                        Text(repo).font(.caption)
-                            .foregroundStyle(theme.tokens.foreground.opacity(0.6))
+                    Button {
+                        open(link)
+                    } label: {
+                        HStack {
+                            Image(systemName: LinkSymbol.name(for: link.scheme))
+                            Text(link.label)
+                            if let repo = link.repo {
+                                Text(repo).font(.caption)
+                                    .foregroundStyle(theme.tokens.foreground.opacity(0.6))
+                            }
+                        }
+                        .foregroundStyle(inert ? theme.tokens.foreground.opacity(0.5)
+                                               : theme.tokens.foreground)
                     }
+                    .buttonStyle(.plain)
                     Spacer()
                     Button {
                         remove(link)
@@ -116,6 +127,27 @@ struct LinkListView: View {
             }
         }
         .foregroundStyle(theme.tokens.foreground)
+    }
+
+    private func isInert(_ link: Link) -> Bool {
+        if case .inert = LinkResolution.route(for: link) { return true }
+        return false
+    }
+
+    private func open(_ link: Link) {
+        do {
+            // A nil reason means it was actioned; a reason means there was
+            // nothing to do, and the user should be told which.
+            if let reason = try LinkOpening.open(link, using: opener) {
+                error = reason
+            } else {
+                error = nil
+            }
+        } catch let failure as LinkOpenError {
+            error = failure.message
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     private func remove(_ link: Link) {
