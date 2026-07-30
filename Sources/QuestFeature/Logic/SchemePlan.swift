@@ -10,6 +10,12 @@ import Foundation
 /// store executes — the preview cannot drift from the action.
 public enum SchemePlan {
     public struct Plan: Sendable, Equatable {
+        /// The scheme this plan was diffed against. `applyScheme` refuses to
+        /// apply a plan whose `current` no longer matches the stored scheme:
+        /// a plan is a snapshot, and the store can be driven over MCP while a
+        /// user sits on the confirm step. Without this, the later write silently
+        /// reverts the earlier one whenever no item is left dangling.
+        public let current: StatusScheme
         public let proposed: StatusScheme
         public let added: [Status]
         public let renamed: [Status]
@@ -129,7 +135,7 @@ public enum SchemePlan {
         let reordered = survivingOrder != previousOrder
 
         return .valid(Plan(
-            proposed: proposed, added: added, renamed: renamed, recoloured: recoloured,
+            current: current, proposed: proposed, added: added, renamed: renamed, recoloured: recoloured,
             recategorised: recategorised, removed: removed, reassignments: reassignments,
             closing: closing, reopening: reopening, reordered: reordered,
             itemsReassigned: itemsReassigned,

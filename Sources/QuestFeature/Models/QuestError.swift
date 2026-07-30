@@ -13,6 +13,7 @@ public enum QuestError: Error, Equatable, Sendable {
     /// A scheme edit would have left items pointing at a status the new scheme
     /// does not contain — the plan went stale between planning and applying.
     case schemeWouldOrphanItems(String)
+    case schemeChangedUnderneath
     case cyclicParent
     case linkNotFound(String)
     case linkAlreadyExists(String)
@@ -31,6 +32,9 @@ public enum QuestError: Error, Equatable, Sendable {
             "Items still hold status '\(id)', which the new scheme does not contain — "
             + "the project changed since this scheme edit was worked out. "
             + "Nothing was changed; review the scheme again."
+        case .schemeChangedUnderneath:
+            "This project's statuses changed since these edits were planned. "
+            + "Review the current statuses and apply again."
         case .cyclicParent: "An item cannot be moved under its own descendant."
         case .linkNotFound(let id): "No link \(id) on that project or item."
         case .linkAlreadyExists(let id):

@@ -13,6 +13,11 @@ extension ProjectStore {
         guard !isTrashed(projectID), var document = openProject(projectID) else {
             throw QuestError.projectNotFound(projectID)
         }
+        // A plan is a snapshot. Refuse it if the scheme moved underneath —
+        // otherwise this write silently discards whatever changed it.
+        guard document.project.statusScheme == plan.current else {
+            throw QuestError.schemeChangedUnderneath
+        }
         // A plan that changes nothing must not write. Committing it would append
         // a `schemeUpdated` event summarised "no changes" and bump `updatedAt`,
         // putting an edit in the activity log that never happened.

@@ -248,4 +248,78 @@ struct ProjectStoreSchemeTests {
             #expect(scheme.status(id: item.statusID) != nil)
         }
     }
+
+    @Test("a plan built against a since-changed scheme is refused, and writes nothing")
+    func refusesStalePlan() throws {
+        let (store, project) = makeStore()
+        let epic = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                        title: "E", statusID: "todo", actor: .user)
+
+        // Plan A: remove in_review.
+        var proposedA = StatusScheme.softwareDefault
+        proposedA.statuses.removeAll { $0.id == "in_review" }
+        let planA = try #require(SchemePlan.plan(current: .softwareDefault, proposed: proposedA,
+                                                reassignments: [:],
+                                                items: store.allItems(in: project.id)).value)
+
+        // Someone else changes the scheme first — here, renaming Backlog.
+        var proposedB = StatusScheme.softwareDefault
+        proposedB.statuses[0] = Status(id: "backlog", name: "Icebox",
+                                       category: .todo, colorToken: "muted")
+        let planB = try #require(SchemePlan.plan(current: .softwareDefault, proposed: proposedB,
+                                                reassignments: [:],
+                                                items: store.allItems(in: project.id)).value)
+        try store.applyScheme(planB, to: project.id, actor: .agent)
+        let activityAfterB = store.activity(for: project.id).count
+
+        // Plan A is now stale: it was diffed against the pre-rename scheme.
+        #expect(throws: QuestError.schemeChangedUnderneath) {
+            try store.applyScheme(planA, to: project.id, actor: .user)
+        }
+
+        // Nothing from plan A landed, and the rename survives.
+        let scheme = try #require(store.openProject(project.id)?.project.statusScheme)
+        #expect(scheme.status(id: "backlog")?.name == "Icebox")
+        #expect(scheme.status(id: "in_review") != nil)
+        #expect(store.activity(for: project.id).count == activityAfterB)
+        #expect(store.items(in: project.id).first { $0.id == epic.id }?.statusID == "todo")
+    }
+
+    @Test("a plan against the unchanged scheme still applies")
+    func freshPlanStillApplies() throws {
+        let (store, project) = makeStore()
+        var proposed = StatusScheme.softwareDefault
+        proposed.statuses.removeAll { $0.id == "in_review" }
+        let plan = try #require(SchemePlan.plan(current: .softwareDefault, proposed: proposed,
+                                                reassignments: [:],
+                                                items: store.allItems(in: project.id)).value)
+
+        try store.applyScheme(plan, to: project.id, actor: .user)
+
+        #expect(store.openProject(project.id)?.project.statusScheme.status(id: "in_review") == nil)
+    }
+
+    @Test("re-planning against the new scheme succeeds after a refusal")
+    func replanRecovers() throws {
+        let (store, project) = makeStore()
+        var proposedB = StatusScheme.softwareDefault
+        proposedB.statuses[0] = Status(id: "backlog", name: "Icebox",
+                                       category: .todo, colorToken: "muted")
+        let planB = try #require(SchemePlan.plan(current: .softwareDefault, proposed: proposedB,
+                                                reassignments: [:], items: []).value)
+        try store.applyScheme(planB, to: project.id, actor: .agent)
+
+        // Re-plan against what the store now holds.
+        let live = try #require(store.openProject(project.id)?.project.statusScheme)
+        var proposedC = live
+        proposedC.statuses.removeAll { $0.id == "in_review" }
+        let planC = try #require(SchemePlan.plan(current: live, proposed: proposedC,
+                                                reassignments: [:], items: []).value)
+
+        try store.applyScheme(planC, to: project.id, actor: .user)
+
+        let scheme = try #require(store.openProject(project.id)?.project.statusScheme)
+        #expect(scheme.status(id: "in_review") == nil)
+        #expect(scheme.status(id: "backlog")?.name == "Icebox")
+    }
 }

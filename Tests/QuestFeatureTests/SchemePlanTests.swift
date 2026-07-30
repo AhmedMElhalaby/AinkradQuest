@@ -227,4 +227,13 @@ struct SchemePlanTests {
         #expect(plan.summary.contains("Todo"))
         #expect(plan.summary.contains("1"))
     }
+
+    @Test("a plan records the scheme it was diffed against")
+    func planRecordsCurrent() throws {
+        var proposed = current
+        proposed.statuses.removeAll { $0.id == "in_review" }
+        let plan = try #require(SchemePlan.plan(current: current, proposed: proposed,
+                                                reassignments: [:], items: []).value)
+        #expect(plan.current == current)
+    }
 }
