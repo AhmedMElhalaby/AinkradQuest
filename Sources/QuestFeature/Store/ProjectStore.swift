@@ -13,10 +13,15 @@ public final class ProjectStore {
     /// Set when a write to the repository could not be completed. Views show a
     /// persistent banner while this is non-nil; the in-memory change is kept.
     public private(set) var persistenceFailure: String?
-    /// Bumped once per successful mutation. Exists so a view can memoize derived
-    /// cross-project work instead of recomputing it on every body pass — see
-    /// `TodaySurface`. Bumped only AFTER a write succeeds: a failed persist must
-    /// not advertise a change, or a cache would hold state that was never saved.
+    /// Bumped once per mutation that passed validation and was applied in
+    /// memory. Exists so a view can memoize derived cross-project work instead
+    /// of recomputing it on every body pass — see `TodaySurface`. A rejected
+    /// mutation (one that throws before reaching `commit`/`createProject`)
+    /// never bumps it. A mutation whose PERSIST failed still bumps it: the
+    /// in-memory change is kept authoritative behind the `persistenceFailure`
+    /// banner (see `persist(_:)`), so a derived-work cache must invalidate to
+    /// reflect it too. Treat this counter as "in-memory state changed," not as
+    /// "durably saved."
     public private(set) var revision: Int = 0
 
     private let repository: any ProjectRepository

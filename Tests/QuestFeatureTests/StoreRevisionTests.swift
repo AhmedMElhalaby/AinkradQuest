@@ -55,4 +55,14 @@ struct StoreRevisionTests {
         }
         #expect(store.revision == before)
     }
+
+    @Test("a mutation whose persist fails still bumps the revision")
+    func failedPersistStillBumps() {
+        let repository = FailingSaveProjectRepository()
+        let store = ProjectStore(repository: repository)
+        let before = store.revision
+        _ = store.createProject(name: "A", kind: .software, actor: .user)
+        #expect(store.revision > before)
+        #expect(store.persistenceFailure != nil)
+    }
 }
