@@ -154,6 +154,26 @@ struct SchemePlanTests {
         #expect(plan.added.map(\.id) == ["blocked"])
     }
 
+    @Test("a colour-only change is reported in the summary, not silently dropped")
+    func recolouredSummary() throws {
+        var proposed = current
+        proposed.statuses[3] = status("in_review", .active, name: "In Review")
+        proposed.statuses[3].colorToken = "danger"
+
+        let plan = try #require(SchemePlan.plan(current: current, proposed: proposed,
+                                                reassignments: [:], items: []).value)
+        #expect(plan.recoloured.map(\.id) == ["in_review"])
+        #expect(plan.summary.contains("In Review"))
+        #expect(plan.summary != "no changes")
+    }
+
+    @Test("an identical scheme summarises as no changes")
+    func identicalSchemeIsNoChanges() throws {
+        let plan = try #require(SchemePlan.plan(current: current, proposed: current,
+                                                reassignments: [:], items: []).value)
+        #expect(plan.summary == "no changes")
+    }
+
     @Test("the summary names what will happen, for the confirm step and the agent")
     func summary() throws {
         var proposed = current

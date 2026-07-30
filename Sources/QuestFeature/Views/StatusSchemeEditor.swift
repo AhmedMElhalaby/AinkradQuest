@@ -140,9 +140,21 @@ struct StatusSchemeEditor: View {
 
     private var items: [WorkItem] { store.allItems(in: project.id) }
 
+    /// The scheme as it stands in the store RIGHT NOW, not the copy captured
+    /// when this sheet opened. Within one sheet session, Apply can run more
+    /// than once — a second plan must diff against what the first apply just
+    /// wrote, or a revert of that first change is invisible (diffed against
+    /// the pre-session original, it looks like a no-op) and a re-removal of
+    /// an already-removed status gets proposed again. Falls back to the
+    /// captured `project` only if the store somehow has nothing open (should
+    /// not happen for an existing project mid-session).
+    private var currentScheme: StatusScheme {
+        store.openProject(project.id)?.project.statusScheme ?? project.statusScheme
+    }
+
     private var occupiedRemovals: [Status] {
         let surviving = Set(drafts.map(\.id))
-        return project.statusScheme.statuses
+        return currentScheme.statuses
             .filter { !surviving.contains($0.id) && itemCount($0.id) > 0 }
     }
 
@@ -158,7 +170,7 @@ struct StatusSchemeEditor: View {
     /// Plans first and shows the result. The user confirms the SAME plan value
     /// that will execute, so the preview cannot disagree with the outcome.
     private func review() {
-        switch SchemePlan.plan(current: project.statusScheme,
+        switch SchemePlan.plan(current: currentScheme,
                                proposed: StatusDraft.scheme(from: drafts),
                                reassignments: reassignments, items: items) {
         case .invalid(let message):
@@ -173,6 +185,11 @@ struct StatusSchemeEditor: View {
     private func apply(_ plan: SchemePlan.Plan) {
         do {
             try store.applyScheme(plan, to: project.id, actor: .user)
+            // Re-seed from what was actually just applied, and drop any
+            // leftover pre-apply edit state, so a second Apply in this same
+            // sheet session diffs against reality instead of stale rows.
+            drafts = StatusDraft.drafts(from: plan.proposed)
+            reassignments = [:]
             pendingPlan = nil
             error = nil
         } catch let failure as QuestError {

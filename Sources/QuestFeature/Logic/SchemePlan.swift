@@ -111,14 +111,15 @@ public enum SchemePlan {
             recategorised: recategorised, removed: removed, reassignments: reassignments,
             closing: closing, reopening: reopening, reordered: reordered,
             itemsReassigned: itemsReassigned,
-            summary: describe(added: added, renamed: renamed, recategorised: recategorised,
+            summary: describe(added: added, renamed: renamed, recoloured: recoloured,
+                              recategorised: recategorised,
                               removed: removed, reassignments: reassignments,
                               proposedByID: proposedByID, currentByID: currentByID,
                               items: items, closing: closing, reopening: reopening,
                               reordered: reordered)))
     }
 
-    private static func describe(added: [Status], renamed: [Status],
+    private static func describe(added: [Status], renamed: [Status], recoloured: [Status],
                                  recategorised: [Status], removed: [Status],
                                  reassignments: [String: String],
                                  proposedByID: [String: Status],
@@ -131,6 +132,9 @@ public enum SchemePlan {
             parts.append("renamed " + renamed.map { status in
                 "\(currentByID[status.id]?.name ?? status.id) to \(status.name)"
             }.joined(separator: ", "))
+        }
+        if !recoloured.isEmpty {
+            parts.append("recoloured " + recoloured.map(\.name).joined(separator: ", "))
         }
         for status in removed {
             let count = items.filter { $0.statusID == status.id }.count

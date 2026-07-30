@@ -96,6 +96,37 @@ struct ProjectStoreSchemeTests {
         #expect(reopened.openProject(project.id)?.project.statusScheme.status(id: "in_review") == nil)
     }
 
+    @Test("a revert plan diffs against the CURRENT store scheme, not a stale pre-session copy")
+    func revertPlansAgainstCurrentScheme() throws {
+        let (store, project) = makeStore()
+        let epic = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                        title: "E", statusID: "in_review", actor: .user)
+
+        // First apply: move in_review into .done.
+        var toDone = StatusScheme.softwareDefault
+        toDone.statuses[3] = Status(id: "in_review", name: "In Review",
+                                    category: .done, colorToken: "success")
+        let closing = try #require(SchemePlan.plan(
+            current: .softwareDefault, proposed: toDone, reassignments: [:],
+            items: store.allItems(in: project.id)).value)
+        try store.applyScheme(closing, to: project.id, actor: .user)
+        #expect(store.items(in: project.id).first { $0.id == epic.id }?.closedAt != nil)
+
+        // Second plan, in the SAME session, must diff against what the store
+        // now holds (in_review == .done) — not the pre-session original
+        // (in_review == .active). Planning against the stale original would
+        // see no category change at all, and `reopening` would stay empty
+        // even though this apply reverts the category and must reopen items.
+        let currentScheme = try #require(store.openProject(project.id)?.project.statusScheme)
+        let revert = try #require(SchemePlan.plan(
+            current: currentScheme, proposed: .softwareDefault, reassignments: [:],
+            items: store.allItems(in: project.id)).value)
+        #expect(!revert.reopening.isEmpty)
+
+        try store.applyScheme(revert, to: project.id, actor: .user)
+        #expect(store.items(in: project.id).first { $0.id == epic.id }?.closedAt == nil)
+    }
+
     @Test("a trashed project is refused")
     func refusesTrashed() throws {
         let (store, project) = makeStore()
