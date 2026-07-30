@@ -97,47 +97,60 @@ enum SchemeEditorState {
 struct StatusSchemeEditor: View {
     @Bindable var store: ProjectStore
     let project: Project
-    let theme: HostTheme
+    /// The shell's reporting path, replacing this view's old `error` string.
+    /// Scheme failures are transient events (a rejected plan, a stale apply),
+    /// so a toast is the right shape; the STALE-REFUSAL branch below still
+    /// re-seeds the rows, which is the part that must not be lost.
+    let report: (String, AinkradStatus) -> Void
+    /// Owned by `ProjectSettingsSheet`, not by this view, so the sheet can see
+    /// its own confirm step. While a plan is pending the sheet must refuse to
+    /// save underneath it — otherwise Return would discard a plan the user is
+    /// looking at. One source of truth: this view is still the only writer.
+    @Binding var pendingPlan: SchemePlan.Plan?
 
     @State private var drafts: [StatusDraft]
     @State private var newName = ""
     @State private var reassignments: [String: String] = [:]
-    @State private var error: String?
-    @State private var pendingPlan: SchemePlan.Plan?
 
-    init(store: ProjectStore, project: Project, theme: HostTheme) {
+    @Environment(\.ainkradTheme) private var theme
+    @Environment(\.ainkradStatusColors) private var statusColors
+
+    init(store: ProjectStore, project: Project,
+         report: @escaping (String, AinkradStatus) -> Void,
+         pendingPlan: Binding<SchemePlan.Plan?>) {
         self.store = store
         self.project = project
-        self.theme = theme
+        self.report = report
+        _pendingPlan = pendingPlan
         _drafts = State(initialValue: StatusDraft.drafts(from: project.statusScheme))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Statuses").font(.headline).foregroundStyle(theme.tokens.accentPrimary)
+        VStack(alignment: .leading, spacing: AinkradSpacing.sm) {
+            AinkradSectionHeader(title: "Statuses")
 
             List {
                 ForEach($drafts) { $draft in
-                    HStack {
-                        TextField("Name", text: $draft.name)
-                        Picker("", selection: $draft.category) {
-                            ForEach(StatusCategory.allCases, id: \.self) {
-                                Text($0.rawValue).tag($0)
-                            }
-                        }
-                        .labelsHidden().frame(width: 110)
-                        Picker("", selection: $draft.color) {
-                            ForEach(ProjectColorToken.allCases) { Text($0.title).tag($0) }
-                        }
-                        .labelsHidden().frame(width: 110)
-                        Button {
+                    HStack(spacing: AinkradSpacing.xs) {
+                        AinkradTextField(text: $draft.name, placeholder: "Name")
+                        AinkradSelect(items: StatusCategory.allCases,
+                                      selection: $draft.category) { $0.rawValue }
+                        AinkradSelect(items: ProjectColorToken.allCases,
+                                      selection: $draft.color,
+                                      label: { $0.title },
+                                      swatch: { $0.color(tokens: theme,
+                                                         statusColors: statusColors) })
+                        AinkradIconButton(systemName: "minus.circle") {
                             drafts.removeAll { $0.id == draft.id }
-                        } label: { Image(systemName: "minus.circle") }
-                            .buttonStyle(.plain)
+                        }
+                        .help("Remove status")
+                        .accessibilityLabel("Remove status")
                     }
                 }
                 .onMove { drafts.move(fromOffsets: $0, toOffset: $1) }
             }
+            // A deliberate fixed list height: the rows scroll inside the sheet
+            // rather than growing it past the modal.
             .frame(height: 180)
             .scrollContentBackground(.hidden)
             // While a plan is pending, the visible rows must stay in lockstep
@@ -145,55 +158,80 @@ struct StatusSchemeEditor: View {
             // an already-reviewed row is silently discarded when Apply
             // re-seeds `drafts` from `plan.proposed`. Disabling every editable
             // control keeps Cancel/Apply as the only possible actions.
+            //
+            // DISABLED, never removed: each row's `AinkradSelect` opens a
+            // floating panel keyed to its own `@State`, so unmounting a row to
+            // express "not now" would kill an open dropdown mid-interaction.
             .disabled(pendingPlan != nil)
 
-            HStack {
-                TextField("New status", text: $newName)
+            HStack(spacing: AinkradSpacing.xs) {
+                AinkradTextField(text: $newName, placeholder: "New status")
                     .disabled(pendingPlan != nil)
-                Button("Add") {
+                AinkradButton(title: "Add", style: .secondary) {
                     drafts.append(StatusDraft.make(name: newName, existing: drafts))
                     newName = ""
                 }
-                .disabled(pendingPlan != nil || newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(pendingPlan != nil
+                          || newName.trimmingCharacters(in: .whitespaces).isEmpty)
             }
 
             // Any removed status that still holds items needs a destination
             // before the plan will validate.
             ForEach(occupiedRemovals, id: \.id) { status in
-                HStack {
-                    Text("Move \(status.name)'s \(itemCount(status.id)) item(s) to")
-                        .font(.caption)
-                    Picker("", selection: binding(for: status.id)) {
-                        Text("Choose…").tag("")
-                        ForEach(drafts) { Text($0.name).tag($0.id) }
+                AinkradFormRow(title: "Move \(status.name)'s \(itemCount(status.id)) item(s) to") {
+                    AinkradSelect(items: destinations, selection: binding(for: status.id)) {
+                        destinationLabel($0)
                     }
-                    .labelsHidden()
                 }
             }
             .disabled(pendingPlan != nil)
 
-            if let error {
-                Text(error).font(.caption).foregroundStyle(theme.statusColors.danger)
-            }
-
             if let pendingPlan {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: AinkradSpacing.xs) {
                     Text("This will: \(pendingPlan.summary)").font(.caption)
                     HStack {
-                        Button("Cancel") { self.pendingPlan = nil }
-                        Button("Apply") { apply(pendingPlan) }
-                            .keyboardShortcut(.defaultAction)
+                        AinkradButton(title: "Cancel", style: .secondary) {
+                            self.pendingPlan = nil
+                        }
+                        AinkradButton(title: "Apply", style: .primary) {
+                            apply(pendingPlan)
+                        }
                     }
                 }
+                // Restores the `.defaultAction` the pre-kit `Button("Apply")`
+                // carried. Mounted ONLY while a plan is pending, and the
+                // sheet's own default-action Save is mounted only while one is
+                // NOT — so exactly one default action exists at any moment and
+                // Return can never mean two things.
+                .background(defaultActionApply(pendingPlan))
             } else {
-                Button("Review changes", action: review)
+                AinkradButton(title: "Review changes", style: .secondary, action: review)
             }
         }
-        .textFieldStyle(.roundedBorder)
-        .foregroundStyle(theme.tokens.foreground)
+        .foregroundStyle(theme.foreground)
+    }
+
+    private func defaultActionApply(_ plan: SchemePlan.Plan) -> some View {
+        Button("") { apply(plan) }
+            .keyboardShortcut(.defaultAction)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
     }
 
     private var items: [WorkItem] { store.allItems(in: project.id) }
+
+    /// The destinations a reassignment select offers: the sentinel `""`
+    /// ("Choose…") plus every surviving draft id. `AinkradSelect` takes a
+    /// NON-optional binding, so the "nothing picked yet" state has to be a real
+    /// member of the item list rather than a nil selection — the sentinel keeps
+    /// `SchemePlan`'s "no destination chosen" rejection reachable exactly as the
+    /// old `Text("Choose…").tag("")` row did.
+    private var destinations: [String] { [""] + drafts.map(\.id) }
+
+    private func destinationLabel(_ id: String) -> String {
+        id.isEmpty ? "Choose…" : (drafts.first { $0.id == id }?.name ?? id)
+    }
 
     /// The scheme as it stands in the store RIGHT NOW, not the copy captured
     /// when this sheet opened. Within one sheet session, Apply can run more
@@ -228,16 +266,15 @@ struct StatusSchemeEditor: View {
         switch SchemeEditorState.plan(current: currentScheme, drafts: drafts,
                                       reassignments: reassignments, items: items) {
         case .invalid(let message):
-            error = message
+            report(message, .danger)
             pendingPlan = nil
         case .valid(let plan) where plan.changesNothing:
             // Nothing to confirm and nothing to write. Offering a confirm step
             // whose only outcome is a "no changes" entry in the activity log
             // asks the user to approve a lie.
-            error = nil
+            report("No status changes to apply.", .neutral)
             pendingPlan = nil
         case .valid(let plan):
-            error = nil
             pendingPlan = plan
         }
     }
@@ -252,17 +289,16 @@ struct StatusSchemeEditor: View {
             drafts = next.drafts
             reassignments = next.reassignments
             pendingPlan = nil
-            error = nil
         } catch QuestError.schemeChangedUnderneath {
             let recovered = SchemeEditorState.afterStaleRefusal(currentScheme: currentScheme)
             drafts = recovered.drafts
             reassignments = recovered.reassignments
             pendingPlan = nil
-            error = QuestError.schemeChangedUnderneath.message
+            report(QuestError.schemeChangedUnderneath.message, .danger)
         } catch let failure as QuestError {
-            error = failure.message
+            report(failure.message, .danger)
         } catch {
-            self.error = error.localizedDescription
+            report(error.localizedDescription, .danger)
         }
     }
 }

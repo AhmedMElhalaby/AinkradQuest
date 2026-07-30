@@ -3,16 +3,21 @@ import AinkradAppKit
 
 /// The theme lookup for `ProjectColorToken` (declared in `Models/`, so the MCP
 /// layer can validate against the same closed set without importing a view).
-/// It lives here because `HostTheme` is a view-layer concern.
+///
+/// It takes the DERIVED token structs rather than the `HostTheme` object,
+/// because those are what the host actually injects into the SwiftUI
+/// environment (`\.ainkradTheme`, `\.ainkradStatusColors`). Taking `HostTheme`
+/// forced every view that wanted a swatch to have the class threaded down to
+/// it by hand.
 extension ProjectColorToken {
-    @MainActor func color(in theme: HostTheme) -> Color {
+    func color(tokens: HostThemeTokens, statusColors: AinkradStatusColors) -> Color {
         switch self {
-        case .accentPrimary: theme.tokens.accentPrimary
-        case .accentSecondary: theme.tokens.accentSecondary
-        case .success: theme.statusColors.success
-        case .warning: theme.statusColors.warning
-        case .danger: theme.statusColors.danger
-        case .muted: theme.tokens.foreground.opacity(0.4)
+        case .accentPrimary: tokens.accentPrimary
+        case .accentSecondary: tokens.accentSecondary
+        case .success: statusColors.success
+        case .warning: statusColors.warning
+        case .danger: statusColors.danger
+        case .muted: tokens.foreground.opacity(0.4)
         }
     }
 }
@@ -39,71 +44,126 @@ enum ProjectSettingsValidation {
 }
 
 /// Name, summary, icon and colour. Draft-until-Save, like ItemEditor.
+///
+/// Presented through `.ainkradModal`, which is an OVERLAY modifier and injects
+/// no `DismissAction` — so this view must never reach for
+/// `@Environment(\.dismiss)`. Closing is the presenter's job, requested through
+/// `onClose`; a `dismiss()` here would compile and do nothing.
 struct ProjectSettingsSheet: View {
     @Bindable var store: ProjectStore
-    let theme: HostTheme
+    let report: (String, AinkradStatus) -> Void
+    /// Asks the presenter to take this sheet down. Called ONLY as the last
+    /// statement of a path, because it unmounts this subtree — a `@State`
+    /// write after it would land in a view that no longer exists.
+    let onClose: () -> Void
 
     @State private var draft: Project
     @State private var colorToken: ProjectColorToken
-    @State private var error: String?
-    @Environment(\.dismiss) private var dismiss
+    /// The scheme editor's confirm step, hoisted here so this sheet can see it.
+    /// `StatusSchemeEditor` remains its only writer; this sheet only READS it,
+    /// to refuse to save while a plan is awaiting confirmation.
+    @State private var pendingSchemePlan: SchemePlan.Plan?
 
-    init(store: ProjectStore, project: Project, theme: HostTheme) {
+    @Environment(\.ainkradTheme) private var theme
+    @Environment(\.ainkradStatusColors) private var statusColors
+
+    init(store: ProjectStore, project: Project,
+         report: @escaping (String, AinkradStatus) -> Void,
+         onClose: @escaping () -> Void) {
         self.store = store
-        self.theme = theme
+        self.report = report
+        self.onClose = onClose
         _draft = State(initialValue: project)
         _colorToken = State(initialValue: ProjectColorToken.resolve(project.colorToken))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            TextField("Name", text: $draft.name)
-            TextField("Summary", text: $draft.summaryText)
-            TextField("SF Symbol", text: $draft.icon)
-            Picker("Colour", selection: $colorToken) {
-                ForEach(ProjectColorToken.allCases) { token in
-                    Label {
-                        Text(token.title)
-                    } icon: {
-                        Image(systemName: "circle.fill")
-                            .foregroundStyle(token.color(in: theme))
-                    }
-                    .tag(token)
-                }
-            }
-            // The kind picker only relabels the project; it does NOT change an
-            // existing project's status scheme. Schemes ARE editable now, via
-            // the `StatusSchemeEditor` below — this picker still does not
-            // retroactively switch one.
-            Picker("Kind", selection: $draft.kind) {
-                Text("Software").tag(ProjectKind.software)
-                Text("General").tag(ProjectKind.general)
-            }
-            if let error {
-                Text(error).font(.caption).foregroundStyle(theme.statusColors.danger)
-            }
+        VStack(alignment: .leading, spacing: AinkradSpacing.md) {
+            AinkradSectionHeader(title: "Project settings", subtitle: draft.name)
 
-            Divider().overlay(theme.tokens.surface)
-            StatusSchemeEditor(store: store, project: draft, theme: theme)
+            // `.ainkradModal` is an overlay scoped to the presenter's bounds
+            // with NO intrinsic scrolling — unlike the `.sheet` it replaced,
+            // which sized its own window. Header + fields + the scheme editor
+            // (a 180pt list, an add row, one row per occupied removal, and the
+            // confirm block) can easily exceed the shell's height, and without
+            // this cap the button row below would be pushed out of reach with
+            // no way to scroll back to it.
+            ScrollView {
+                VStack(alignment: .leading, spacing: AinkradSpacing.md) {
+                    fields
+                    StatusSchemeEditor(store: store, project: draft, report: report,
+                                       pendingPlan: $pendingSchemePlan)
+                }
+                .padding(.trailing, AinkradSpacing.xs)
+            }
+            // A deliberate cap, matching `ItemEditor`'s, so the buttons below
+            // always stay on screen.
+            .frame(maxHeight: 420)
 
             HStack {
-                Button("Cancel") { dismiss() }
+                AinkradButton(title: "Cancel", style: .secondary, action: onClose)
                 Spacer()
-                Button("Save") { save() }.keyboardShortcut(.defaultAction)
+                AinkradButton(title: "Save", style: .primary, action: save)
             }
         }
-        .textFieldStyle(.roundedBorder)
-        .padding(16)
+        // A deliberate fixed sheet width, so the form does not reflow with the
+        // pane behind it. Inside `.ainkradModal`'s 480pt cap.
         .frame(width: 420)
-        .background(theme.tokens.background)
-        .foregroundStyle(theme.tokens.foreground)
+        .foregroundStyle(theme.foreground)
+        .onSubmit(save)
+        // Mounted only while NO scheme plan is pending; `StatusSchemeEditor`
+        // mounts its own default-action Apply while one IS. Exactly one
+        // default action exists at any moment, so Return is never ambiguous.
+        .background(pendingSchemePlan == nil ? defaultActionSave : nil)
+    }
+
+    /// Return-with-nothing-focused commits, exactly as the pre-kit
+    /// `Button("Save").keyboardShortcut(.defaultAction)` did.
+    @ViewBuilder private var defaultActionSave: some View {
+        Button("") { save() }
+            .keyboardShortcut(.defaultAction)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private var fields: some View {
+        AinkradFormRow(title: "Name") {
+            AinkradTextField(text: $draft.name, placeholder: "Name")
+        }
+        AinkradFormRow(title: "Summary") {
+            AinkradTextField(text: $draft.summaryText, placeholder: "Summary")
+        }
+        AinkradFormRow(title: "Icon", help: "An SF Symbol name") {
+            AinkradTextField(text: $draft.icon, placeholder: "SF Symbol")
+        }
+        AinkradFormRow(title: "Colour") {
+            AinkradSelect(items: ProjectColorToken.allCases, selection: $colorToken,
+                          label: { $0.title },
+                          swatch: { $0.color(tokens: theme, statusColors: statusColors) })
+        }
+        // The kind picker only relabels the project; it does NOT change an
+        // existing project's status scheme. Schemes ARE editable now, via
+        // the `StatusSchemeEditor` below — this picker still does not
+        // retroactively switch one.
+        AinkradFormRow(title: "Kind") {
+            AinkradSegmentedPicker(items: [ProjectKind.software, .general],
+                                   selection: $draft.kind) { $0.settingsTitle }
+        }
     }
 
     private func save() {
+        // A pending scheme plan is a confirm step the user is looking at.
+        // Saving now would close the sheet and abandon it, so Return (or the
+        // Save button) refuses instead of silently discarding the plan.
+        guard pendingSchemePlan == nil else {
+            report("Apply or cancel the status changes first.", .warning)
+            return
+        }
         var draft = draft
         switch ProjectSettingsValidation.validate(name: draft.name) {
         case .invalid(let message):
-            error = message
+            report(message, .danger)
             return
         case .valid(let name):
             draft.name = name
@@ -120,11 +180,24 @@ struct ProjectSettingsSheet: View {
         }
         do {
             try store.updateProject(draft, actor: .user)
-            dismiss()
+            // LAST statement on this path — everything after it would run in an
+            // unmounted subtree.
+            onClose()
         } catch let failure as QuestError {
-            error = failure.message
+            report(failure.message, .danger)
         } catch {
-            self.error = error.localizedDescription
+            report(error.localizedDescription, .danger)
+        }
+    }
+}
+
+private extension ProjectKind {
+    /// The label the settings picker shows. Local to this file because it is a
+    /// UI string, not part of the persisted vocabulary.
+    var settingsTitle: String {
+        switch self {
+        case .software: "Software"
+        case .general: "General"
         }
     }
 }

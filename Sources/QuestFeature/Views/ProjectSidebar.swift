@@ -27,88 +27,95 @@ public enum ProjectStateFilter: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// Wraps a freshly created project's attachment suggestions for `.sheet(item:)`,
-/// which needs `Identifiable` rather than a bare tuple.
-private struct SuggestionSheetState: Identifiable {
+/// Wraps a freshly created project's attachment suggestions for presentation,
+/// which needs `Identifiable` rather than a bare tuple. File-scope (no longer
+/// private to the sidebar) because `NewProjectForm` owns creation now.
+struct SuggestionSheetState: Identifiable {
     let projectID: UUID
     let suggestions: [AttachmentSuggestion]
     var id: UUID { projectID }
 }
 
-struct ProjectSidebar: View {
+/// Opens the shell's single new-project modal. The sidebar's "New project"
+/// button, the command menu's `.newProject`, the ⌘N chord and the header's "+"
+/// (with no project selected) all have to reach ONE presentation, and
+/// `QuestSidebar.init` is a fixed contract with no room for another binding — so
+/// the shell publishes the trigger instead.
+///
+/// A named `Equatable` wrapper rather than a bare `() -> Void`: `@Entry` warns
+/// that storing a closure invalidates every dependent on each update, because
+/// closures cannot be compared. The shell builds a fresh closure on every body
+/// pass, so that would churn the sidebar subtree. All instances compare equal
+/// because the action's behaviour never varies — only its captured `self` does.
+struct QuestNewProjectAction: Equatable {
+    /// The default is deliberately loud, matching `QuestShellContent.activate`'s
+    /// unhandled-binding trap: an inert "New project" button produces no build
+    /// error and no warning, so a sidebar mounted outside `QuestShellContent`
+    /// must fail visibly in debug rather than silently doing nothing.
+    /// Computed, not a `static let`: the type holds a closure and so is not
+    /// `Sendable`, which makes a stored global a Swift 6 concurrency error.
+    static var unwired: QuestNewProjectAction {
+        QuestNewProjectAction {
+            assertionFailure("QuestSidebar was mounted without \\.questNewProject injected — the New project button is inert")
+        }
+    }
+
+    private let perform: () -> Void
+
+    init(_ perform: @escaping () -> Void) { self.perform = perform }
+
+    func callAsFunction() { perform() }
+
+    static func == (lhs: QuestNewProjectAction, rhs: QuestNewProjectAction) -> Bool { true }
+}
+
+extension EnvironmentValues {
+    @Entry var questNewProject: QuestNewProjectAction = .unwired
+}
+
+struct QuestSidebar: View {
     @Bindable var store: ProjectStore
-    let theme: HostTheme
     let documents: PluginDocumentStore
     @Binding var selection: UUID?
     @Binding var surface: QuestSurface
-    @Binding var showingTrash: Bool
     @Binding var settingsProject: UUID?
+    let report: (String, AinkradStatus) -> Void
 
-    @State private var newProjectName = ""
     @State private var filter: ProjectStateFilter = .active
-    @State private var error: String?
-    /// Set right after `create()` when suggestions were found for the new
-    /// project; presented as a sheet. Creation itself never waits on this —
-    /// when `AttachmentSuggestions.build` returns nothing (the normal case
-    /// with no roots granted) nothing changes here at all.
-    @State private var suggestionState: SuggestionSheetState?
+    @Environment(\.questNewProject) private var newProject
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Button {
-                    surface = .today
-                } label: {
-                    Label(QuestSurface.today.title, systemImage: QuestSurface.today.icon)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(surface == .today ? theme.tokens.accentPrimary : theme.tokens.foreground)
-
-                Spacer()
-
-                Button {
-                    showingTrash = true
-                } label: {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(theme.tokens.foreground)
-                .help("Trash")
-            }
+        VStack(alignment: .leading, spacing: AinkradSpacing.sm) {
+            // Today stays in the sidebar: it is the cross-project entry point,
+            // not a surface of the selected project, so the header's switcher
+            // (which is project-scoped) is the wrong home for it.
+            AinkradListRow(isSelected: surface == .today,
+                           onTap: { surface = .today; selection = nil },
+                           leading: { AinkradIconGlyph(systemName: QuestSurface.today.icon) },
+                           title: QuestSurface.today.title,
+                           trailing: { EmptyView() })
 
             HStack {
-                Text("Projects")
-                    .font(.caption)
-                    .foregroundStyle(theme.tokens.foreground.opacity(0.6))
+                AinkradSectionHeader(title: "Projects")
                 Spacer()
-                Picker("", selection: $filter) {
-                    ForEach(ProjectStateFilter.allCases) { filter in
-                        Text(filter.title).tag(filter)
+                AinkradSelect(items: ProjectStateFilter.allCases, selection: $filter) { $0.title }
+                    .frame(maxWidth: 104)
+            }
+
+            ScrollView {
+                VStack(spacing: AinkradSpacing.xs) {
+                    ForEach(visibleProjects) { project in
+                        AinkradListRow(isSelected: selection == project.id,
+                                       onTap: { selection = project.id },
+                                       leading: { AinkradIconGlyph(systemName: project.icon) },
+                                       title: project.name,
+                                       trailing: { EmptyView() })
+                            .ainkradContextMenu(menu(for: project))
                     }
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(maxWidth: 90)
             }
-
-            let visibleProjects = filter.apply(to: store.projects)
-
-            List(visibleProjects, selection: $selection) { project in
-                Label(project.name, systemImage: project.icon)
-                    .tag(project.id)
-                    .contextMenu {
-                        Button("Settings…") { settingsProject = project.id }
-                        Divider()
-                        Button("Active") { setState(project.id, .active) }
-                        Button("Pause") { setState(project.id, .paused) }
-                        Button("Archive") { setState(project.id, .archived) }
-                        Divider()
-                        Button("Move to Trash", role: .destructive) { trash(project.id) }
-                    }
-            }
-            .scrollContentBackground(.hidden)
             // Both handlers must test against the NEW value. `visibleProjects`
-            // above was computed during the PREVIOUS body pass, so closing over
+            // is computed from the PREVIOUS body pass's state, so closing over
             // it tested the pre-change list and left, say, a paused project
             // selected and rendered in the detail pane after All → Active.
             .onChange(of: filter) { _, newFilter in
@@ -118,70 +125,45 @@ struct ProjectSidebar: View {
                 clearSelectionIfHidden(from: filter.apply(to: newProjects))
             }
 
-            if let error {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(theme.statusColors.danger)
-            }
+            Spacer(minLength: 0)
 
-            if selection != nil {
-                Picker("", selection: $surface) {
-                    ForEach(QuestSurface.allCases.filter(\.requiresProject)) { surface in
-                        Label(surface.title, systemImage: surface.icon).tag(surface)
-                    }
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
-            }
-
-            HStack {
-                TextField("New project", text: $newProjectName)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(create)
-                Button(action: create) { Image(systemName: "plus") }
-                    .disabled(newProjectName.trimmingCharacters(in: .whitespaces).isEmpty)
+            AinkradButton(title: "New project", style: .secondary, icon: "plus") {
+                newProject()
             }
         }
-        .padding(10)
-        .background(theme.tokens.surface)
-        .sheet(item: $suggestionState) { state in
-            AttachmentPicker(store: store, projectID: state.projectID,
-                             suggestions: state.suggestions,
-                             theme: theme) { suggestionState = nil }
-        }
+        .padding(AinkradSpacing.md)
     }
 
-    private func create() {
-        let name = newProjectName.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return }
-        let project = store.createProject(name: name, kind: .software, actor: .user)
-        newProjectName = ""
-        error = nil
-        selection = project.id
-        surface = .overview
+    private var visibleProjects: [ProjectSummary] { filter.apply(to: store.projects) }
 
-        // Suggestions never block creation: they are resolved AFTER the
-        // project already exists and selection has already moved. With no
-        // root granted — the normal case — `build` returns empty and nothing
-        // further happens.
-        // Each granted root is scanned inside its own balanced access scope
-        // (`FolderBookmark.withAccess`); no scoped resource survives this call.
-        let suggestions = AttachmentSuggestions.build(projectName: name, in: documents)
-        if !suggestions.isEmpty {
-            suggestionState = SuggestionSheetState(projectID: project.id, suggestions: suggestions)
-        }
+    private func menu(for project: ProjectSummary) -> [AinkradMenuItem] {
+        [
+            AinkradMenuItem(title: "Settings…", systemName: "gearshape") {
+                settingsProject = project.id
+            },
+            AinkradMenuItem(title: "Active", systemName: "play.circle") {
+                setState(project.id, .active)
+            },
+            AinkradMenuItem(title: "Pause", systemName: "pause.circle") {
+                setState(project.id, .paused)
+            },
+            AinkradMenuItem(title: "Archive", systemName: "archivebox") {
+                setState(project.id, .archived)
+            },
+            AinkradMenuItem(title: "Move to Trash", systemName: "trash", isDestructive: true) {
+                trash(project.id)
+            },
+        ]
     }
 
     private func setState(_ id: UUID, _ state: ProjectState) {
         do {
             try store.setState(id, state: state, actor: .user)
-            // Cleared on success, matching LinkEditor/LinkListView — otherwise
-            // one failure leaves a red line under the sidebar forever.
-            error = nil
+            report("Moved to \(state.rawValue)", .success)
         } catch let failure as QuestError {
-            error = failure.message
+            report(failure.message, .danger)
         } catch {
-            self.error = error.localizedDescription
+            report(error.localizedDescription, .danger)
         }
     }
 
@@ -189,11 +171,11 @@ struct ProjectSidebar: View {
         do {
             try store.deleteProject(id, actor: .user)
             if selection == id { selection = nil }
-            error = nil
+            report("Moved to Trash", .success)
         } catch let failure as QuestError {
-            error = failure.message
+            report(failure.message, .danger)
         } catch {
-            self.error = error.localizedDescription
+            report(error.localizedDescription, .danger)
         }
     }
 
@@ -204,5 +186,84 @@ struct ProjectSidebar: View {
         if let selection, !visibleProjects.contains(where: { $0.id == selection }) {
             self.selection = nil
         }
+    }
+}
+
+/// Project creation, moved out of the sidebar footer into a modal so the
+/// sidebar is a list and nothing else.
+struct NewProjectForm: View {
+    @Bindable var store: ProjectStore
+    let documents: PluginDocumentStore
+    let report: (String, AinkradStatus) -> Void
+    /// Hands the shell the new project AND its resolved attachment suggestions.
+    /// The suggestions cannot be presented from here: this form is itself the
+    /// content of the shell's `.ainkradModal`, and `AinkradModalModifier` is an
+    /// `overlay { if isPresented … }`, so the moment the shell dismisses the
+    /// new-project modal this whole subtree — including any `@State` holding a
+    /// suggestion list — is torn down before a nested modal could render. Only
+    /// a view that outlives the form can present them.
+    let onCreated: (UUID, [AttachmentSuggestion]) -> Void
+
+    @State private var name = ""
+
+    private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AinkradSpacing.md) {
+            AinkradSectionHeader(title: "New project")
+            AinkradFormRow(title: "Name") {
+                AinkradTextField(text: $name, placeholder: "Project name")
+            }
+            HStack {
+                Spacer()
+                // Disabled rather than silently refusing: `create()`'s empty
+                // guard used to `return` with no toast and no visible state, so
+                // a click on an empty field looked like a broken button.
+                AinkradButton(title: "Create", style: .primary) { create() }
+                    .disabled(trimmed.isEmpty)
+            }
+        }
+        // Return creates, as the pre-M5 sidebar footer's `.onSubmit(create)`
+        // did. Both paths are needed: `.onSubmit` fires from the focused text
+        // field, the hidden `.defaultAction` button covers Return with nothing
+        // focused — `AinkradButton` carries no keyboard shortcut of its own, so
+        // migrating off `Button` drops `.defaultAction` silently.
+        .onSubmit(create)
+        .background(defaultActionCreate)
+        // `.ainkradModal` already pads its content with `AinkradSpacing.lg`;
+        // repeating it here would double the inset. 420 is inside the
+        // modifier's 448pt content budget (480 cap less that padding).
+        .frame(width: 420)
+    }
+
+    /// Return-with-nothing-focused creates, exactly as the pre-kit
+    /// `Button("Create").keyboardShortcut(.defaultAction)` did. Disabled on an
+    /// empty name so Return matches the visibly disabled Create button.
+    private var defaultActionCreate: some View {
+        Button("") { create() }
+            .keyboardShortcut(.defaultAction)
+            .disabled(trimmed.isEmpty)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+    }
+
+    private func create() {
+        guard !trimmed.isEmpty else { return }
+        let name = trimmed
+        // The store write happens FIRST and unconditionally: the project exists
+        // and is persisted before anything touches the filesystem, so nothing
+        // below can prevent or undo creation.
+        let project = store.createProject(name: name, kind: .software, actor: .user)
+        self.name = ""
+        report("Created \(project.name)", .success)
+
+        // Suggestions are resolved AFTER the project exists and never gate it.
+        // With no root granted — the normal case — `build` returns empty and the
+        // shell selects the project and shows no picker. Each root is scanned
+        // inside its own balanced `FolderBookmark.withAccess` scope; no scoped
+        // resource survives this call.
+        let suggestions = AttachmentSuggestions.build(projectName: name, in: documents)
+        onCreated(project.id, suggestions)
     }
 }

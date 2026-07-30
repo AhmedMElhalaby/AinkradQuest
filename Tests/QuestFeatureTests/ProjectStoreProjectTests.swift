@@ -201,4 +201,58 @@ struct ProjectStoreProjectTests {
         #expect(store.activeProjects.map(\.name) == ["P"])
         #expect(store.openProject(project.id)?.project.archivedAt == nil)
     }
+
+    // MARK: - purge
+
+    @Test("purging a trashed project removes it from the trash and from disk")
+    func purge() throws {
+        let repository = InMemoryProjectRepository()
+        let store = ProjectStore(repository: repository)
+        let project = store.createProject(name: "Legacy", kind: .general, actor: .user)
+        try store.deleteProject(project.id, actor: .user)
+
+        let before = store.revision
+        try store.purgeProject(project.id)
+        // `revision` is what every view observes to redraw. A purge that
+        // removed a project without advancing it would leave the trash
+        // rendering a row that no longer exists.
+        #expect(store.revision > before)
+
+        #expect(store.trashedProjects.isEmpty)
+        #expect(store.projects.isEmpty)
+        #expect(store.openProject(project.id) == nil)
+
+        let relaunched = ProjectStore(repository: repository)
+        #expect(relaunched.trashedProjects.isEmpty)
+        #expect(relaunched.projects.isEmpty)
+    }
+
+    /// Purge is irreversible, so it must refuse anything the user has not
+    /// already moved to the trash — a live project can never be lost to a
+    /// mis-routed purge call.
+    @Test("purging a live project throws and leaves it alone")
+    func purgeLiveProjectRefused() throws {
+        let store = makeStore()
+        let project = store.createProject(name: "Optimus", kind: .general, actor: .user)
+
+        let before = store.revision
+        #expect(throws: QuestError.projectNotInTrash(project.id)) {
+            try store.purgeProject(project.id)
+        }
+        #expect(store.projects.map(\.name) == ["Optimus"])
+        // The counter's contract: it advances only for a mutation that passed
+        // validation and was applied in memory. A refused purge changed
+        // nothing, so a bump here would be a redraw advertising a write that
+        // never happened.
+        #expect(store.revision == before)
+    }
+
+    @Test("purging an unknown project throws")
+    func purgeUnknown() {
+        let store = makeStore()
+        let id = UUID()
+        #expect(throws: QuestError.projectNotInTrash(id)) {
+            try store.purgeProject(id)
+        }
+    }
 }

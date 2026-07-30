@@ -13,6 +13,16 @@ public final class ProjectStore {
     /// Set when a write to the repository could not be completed. Views show a
     /// persistent banner while this is non-nil; the in-memory change is kept.
     public private(set) var persistenceFailure: String?
+    /// Bumped once per mutation that passed validation and was applied in
+    /// memory. Exists so a view can memoize derived cross-project work instead
+    /// of recomputing it on every body pass — see `TodaySurface`. A rejected
+    /// mutation (one that throws before reaching `commit`/`createProject`)
+    /// never bumps it. A mutation whose PERSIST failed still bumps it: the
+    /// in-memory change is kept authoritative behind the `persistenceFailure`
+    /// banner (see `persist(_:)`), so a derived-work cache must invalidate to
+    /// reflect it too. Treat this counter as "in-memory state changed," not as
+    /// "durably saved."
+    public private(set) var revision: Int = 0
 
     private let repository: any ProjectRepository
     /// Open documents, cached so repeated reads do not re-decode.
@@ -77,6 +87,7 @@ public final class ProjectStore {
         persist(document)
         projects.append(project.summary)
         saveIndex()
+        bumpRevision()
         return project
     }
 
@@ -136,6 +147,29 @@ public final class ProjectStore {
         commit(document)
     }
 
+    /// Hard. The other half of `deleteProject`: drops the document from disk
+    /// and the summary from the index, with no way back. Refuses anything not
+    /// already in the trash, so the irreversible path can only ever be reached
+    /// from something the user has already soft-deleted.
+    ///
+    /// Deliberately takes no `ActivityActor`: the activity feed lives INSIDE
+    /// the document being destroyed, so there is nowhere left to log to.
+    public func purgeProject(_ id: UUID) throws {
+        guard deletedProjectIDs.contains(id) else { throw QuestError.projectNotInTrash(id) }
+        deletedProjectIDs.remove(id)
+        trashedProjects.removeAll { $0.id == id }
+        documents.removeValue(forKey: id)
+        // The index is written BEFORE the document is destroyed. If the index
+        // write fails, the two failure modes are not symmetric: destroying the
+        // document first leaves an index entry pointing at a project whose file
+        // is gone — it shows up in the trash and then fails `restoreProject`
+        // with `projectNotFound`, a dead row the user cannot clear. Saving
+        // first leaves at most a stray file that nothing references.
+        saveIndex()
+        repository.removeProject(id)
+        bumpRevision()
+    }
+
     // MARK: internals
 
     /// Writes the document and refreshes the index entry derived from it.
@@ -145,7 +179,13 @@ public final class ProjectStore {
         persist(document)
         rebuildIndexEntry(for: document.project)
         saveIndex()
+        bumpRevision()
     }
+
+    /// Advances `revision`. Called only from paths that have already reached
+    /// their write — a domain-validation `throw` earlier in a mutating method
+    /// never reaches here, so the counter cannot advertise a rejected write.
+    func bumpRevision() { revision += 1 }
 
     /// Moves the project's summary into whichever of the two owned lists its
     /// trashed state calls for. `trashedProjects` is OWNED state, never derived

@@ -36,11 +36,9 @@ struct QuestSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: AinkradSpacing.md) {
-            AinkradCard {
+            AinkradSectionFrame(title: "Appearance") {
                 VStack(alignment: .leading, spacing: AinkradSpacing.md) {
-                    Text("Quest tracks projects and work items per workspace.")
-                        .font(AinkradFontResolver.font(.body, typography: typo))
-                        .foregroundStyle(theme.foreground)
+                    caption("Quest tracks projects and work items per workspace.")
 
                     AinkradFormRow(title: "Presentation", help: "Applies the next time Quest opens.") {
                         AinkradSegmentedPicker(items: [PluginPresentation.pane, .overlay], selection: $mode) {
@@ -50,11 +48,9 @@ struct QuestSettingsView: View {
                 }
             }
 
-            AinkradCard {
+            AinkradSectionFrame(title: "Folder grants") {
                 VStack(alignment: .leading, spacing: AinkradSpacing.md) {
-                    Text("These folders are used only to suggest attachments when a project is created — nothing is read or written otherwise. Every project's Overview also has its own Attach folder… button, which works whether or not you set anything here.")
-                        .font(AinkradFontResolver.font(.body, typography: typo))
-                        .foregroundStyle(theme.foreground)
+                    caption("These folders are used only to suggest attachments when a project is created — nothing is read or written otherwise. Every project's Overview also has its own Attach folder… button, which works whether or not you set anything here.")
 
                     rootRow(title: "Projects folder",
                            help: "Suggests a matching repo or folder by name when you create a project.",
@@ -64,14 +60,27 @@ struct QuestSettingsView: View {
                            help: "Suggests a matching vault folder by name when you create a project.",
                            key: FolderBookmark.vaultRootKey)
 
+                    // A banner, not a toast: this view is mounted by the HOST's
+                    // settings surface, outside `QuestShell`'s
+                    // `.ainkradToastHost()`, so there is no `report` path to
+                    // reach from here. A failed grant is also a standing
+                    // condition — suggestions stay broken until it is fixed —
+                    // which a toast would expire out from under.
                     if let error {
-                        Text(error).font(.caption).foregroundStyle(statusColors.danger)
+                        AinkradBanner(message: error, status: .danger) { self.error = nil }
                     }
                 }
             }
         }
-        .padding()
+        .padding(AinkradSpacing.lg)
         .onChange(of: mode) { _, newValue in presentation.set(newValue) }
+    }
+
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .font(AinkradFontResolver.font(.body, typography: typo))
+            .foregroundStyle(theme.foreground.opacity(0.75))
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Rendering this row must never acquire a scoped resource — it reads
@@ -82,7 +91,7 @@ struct QuestSettingsView: View {
         let grant = FolderBookmark.grant(forKey: key, in: documents)
         return AinkradFormRow(title: title, help: help) {
             HStack(spacing: AinkradSpacing.sm) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: AinkradSpacing.xs) {
                     Text(Self.pathText(grant))
                         .font(AinkradFontResolver.font(.mono, typography: typo))
                         .foregroundStyle(theme.foreground.opacity(0.8))

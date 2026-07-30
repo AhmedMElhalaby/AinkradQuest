@@ -5,92 +5,138 @@ import AinkradAppKit
 struct BoardSurface: View {
     @Bindable var store: ProjectStore
     let document: ProjectDocument
-    let theme: HostTheme
+    /// Owned by the shell's header, the same binding `ListSurface` reads.
+    /// `QuestHeader` renders its search field on every surface, so a board
+    /// that ignored it would leave a visible control silently doing nothing —
+    /// worse than no control at all. The board grows no field of its own.
+    @Binding var searchText: String
+    let report: (String, AinkradStatus) -> Void
 
+    /// The base the header's query is merged onto. No board UI sets its other
+    /// fields yet, but it is the merge base rather than dead state — see
+    /// `activeFilter`.
     @State private var filter = ItemFilter()
     @State private var editing: WorkItem?
     @State private var groupByEpic = false
 
+    /// Merged at read time, exactly as `ListSurface.activeFilter` does, so the
+    /// shell stays the single owner of the query and the two surfaces cannot
+    /// drift on what "searching" means. Both `BoardGrouping` entry points
+    /// already take an `ItemFilter`, so this needs no change to the grouping.
+    private var activeFilter: ItemFilter {
+        var merged = filter
+        merged.text = searchText
+        return merged
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Toggle("Group by epic", isOn: $groupByEpic)
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
+        VStack(alignment: .leading, spacing: AinkradSpacing.sm) {
+            AinkradFormRow(title: "Group by epic") { AinkradToggle(isOn: $groupByEpic) }
+                .padding(.horizontal, AinkradSpacing.md)
+                .padding(.top, AinkradSpacing.sm)
             ScrollView(.horizontal) {
                 if groupByEpic {
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: AinkradSpacing.lg) {
+                        // `groupedByEpic` keeps its orphan backstop: an item
+                        // whose epic is gone lands in a trailing "No epic"
+                        // group instead of vanishing off the board.
                         ForEach(BoardGrouping.groupedByEpic(items: document.items,
                                                             scheme: document.project.statusScheme,
-                                                            filter: filter)) { group in
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(group.epic.title)
-                                    .font(.title3)
-                                    .foregroundStyle(theme.tokens.foreground)
+                                                            filter: activeFilter)) { group in
+                            VStack(alignment: .leading, spacing: AinkradSpacing.sm) {
+                                AinkradSectionHeader(title: group.epic.title,
+                                                     subtitle: group.isOrphanGroup
+                                                        ? "Items with no live epic" : nil)
                                 columnStrip(group.columns)
                             }
                         }
                     }
-                    .padding(12)
+                    .padding(AinkradSpacing.md)
                 } else {
                     columnStrip(BoardGrouping.columns(items: document.items,
                                                       scheme: document.project.statusScheme,
-                                                      filter: filter))
-                        .padding(12)
+                                                      filter: activeFilter))
+                        .padding(AinkradSpacing.md)
                 }
             }
         }
-        .sheet(item: $editing) { item in
-            ItemEditor(store: store, document: document, item: item, theme: theme)
+        .animation(AinkradMotion.present, value: groupByEpic)
+        // `ItemEditor` no longer reaches for `@Environment(\.dismiss)` — an
+        // overlay-based `.ainkradModal` injects none — so this presenter owns
+        // closing it, via `onClose`. Keyed by `.id(item.id)` because the modal
+        // content view is REUSED across a change of `editing`: without the id,
+        // tapping a second row would keep the first item's `@State draft`.
+        .ainkradModal(isPresented: Binding(get: { editing != nil },
+                                           set: { if !$0 { editing = nil } })) {
+            if let item = editing {
+                ItemEditor(store: store, document: document,
+                           // Re-resolved so an edit made elsewhere since the row
+                           // was tapped is not overwritten by a stale snapshot.
+                           item: document.items.first { $0.id == item.id } ?? item,
+                           report: report,
+                           onClose: { editing = nil })
+                    .id(item.id)
+            }
         }
     }
 
     private func columnStrip(_ columns: [BoardColumn]) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: AinkradSpacing.md) {
             ForEach(columns) { column in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(column.status.name)
-                        .font(.headline)
-                        .foregroundStyle(theme.tokens.foreground)
+                VStack(alignment: .leading, spacing: AinkradSpacing.sm) {
+                    HStack {
+                        AinkradSectionHeader(title: column.status.name)
+                        Spacer()
+                        AinkradBadge(text: "\(column.items.count)")
+                    }
                     ForEach(column.items) { item in
-                        card(item)
-                            .draggable(item.id.uuidString)
+                        card(item).draggable(item.id.uuidString)
                     }
                     Spacer(minLength: 0)
                 }
-                .frame(width: 240)
-                .padding(8)
-                .background(theme.tokens.surface)
+                // A deliberate fixed column width, so columns stay drop-sized
+                // regardless of how much a card's title wants.
+                .frame(width: 260)
+                .padding(AinkradSpacing.sm)
+                .ainkradPanel()
                 .dropDestination(for: String.self) { payload, _ in
                     guard let raw = payload.first, let id = UUID(uuidString: raw) else {
                         return false
                     }
                     // A rejected status (not in this project's scheme) is
                     // impossible here — the column came from the scheme —
-                    // so a throw means a genuinely missing item.
+                    // so a throw means a genuinely missing item. It now
+                    // reaches the user instead of being swallowed.
                     do {
-                        try store.setStatus(id, statusID: column.status.id, actor: .user)
+                        // `withAnimation` rethrows, so the move and the
+                        // animation of its result stay one statement.
+                        try withAnimation(AinkradMotion.present) {
+                            try store.setStatus(id, statusID: column.status.id, actor: .user)
+                        }
                         return true
-                    } catch { return false }
+                    } catch let failure as QuestError {
+                        report(failure.message, .danger)
+                        return false
+                    } catch {
+                        report(error.localizedDescription, .danger)
+                        return false
+                    }
                 }
             }
         }
+        .animation(AinkradMotion.present, value: columns.flatMap { $0.items.map(\.id) })
     }
 
     private func card(_ item: WorkItem) -> some View {
-        Button { editing = item } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.title).foregroundStyle(theme.tokens.foreground)
-                HStack(spacing: 6) {
-                    Text(item.type.rawValue).font(.caption2)
-                    ForEach(item.labels, id: \.self) { Text("#\($0)").font(.caption2) }
+        AinkradCard(onTap: { editing = item }) {
+            VStack(alignment: .leading, spacing: AinkradSpacing.xs) {
+                Text(item.title)
+                HStack(spacing: AinkradSpacing.xs) {
+                    AinkradBadge(text: item.type.rawValue)
+                    ForEach(item.labels, id: \.self) { AinkradChip(label: $0) }
                 }
-                .foregroundStyle(theme.tokens.foreground.opacity(0.6))
             }
-            .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(theme.tokens.background)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
-        .buttonStyle(.plain)
     }
 }
