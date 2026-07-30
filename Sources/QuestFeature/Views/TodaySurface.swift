@@ -53,17 +53,35 @@ public enum QuickCapture {
 
 struct TodaySurface: View {
     @Bindable var store: ProjectStore
-    let theme: HostTheme
+    let report: (String, AinkradStatus) -> Void
     let onOpen: (WorkItem) -> Void
 
     @State private var captureText = ""
-    @State private var captureTarget: UUID?
-    @State private var captureError: String?
+    /// `AinkradSelect` needs a non-optional binding, so this starts as a UUID
+    /// that matches no project and is seeded from the active list below. An
+    /// unseeded value is not a failure: `submitCapture` falls back to the first
+    /// active project rather than silently doing nothing.
+    @State private var captureTargetID = UUID()
+
+    /// Cached because building this opens every active project's document and
+    /// sorts four arrays. As a computed property it re-ran on every body pass —
+    /// once per keystroke in the capture field.
+    ///
+    /// `store.revision` is the right key: it counts *in-memory* mutations, and
+    /// bumps even when the disk write failed (M1 keeps the in-memory change
+    /// authoritative behind a persistent banner). Skipping invalidation on a
+    /// failed persist would make Today show stale data while the banner
+    /// promised the change was kept.
+    @State private var cache: (revision: Int, result: TodayInbox.Result)?
+
+    private var result: TodayInbox.Result {
+        cache?.result ?? TodayInbox.Result(overdue: [], dueToday: [], active: [], recent: [])
+    }
 
     /// Merged per-project inbox results. Each project is judged against its
     /// OWN status scheme — a general-kind project's items must never be
     /// evaluated against the software ladder, or their done-ness is a lie.
-    private var result: TodayInbox.Result {
+    private func rebuild() -> TodayInbox.Result {
         var overdue: [WorkItem] = []
         var dueToday: [WorkItem] = []
         var active: [WorkItem] = []
@@ -90,40 +108,70 @@ struct TodaySurface: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: AinkradSpacing.lg) {
                 capture
-                section("Overdue", result.overdue, color: theme.statusColors.danger)
-                section("Due today", result.dueToday, color: theme.statusColors.warning)
-                section("In progress", result.active, color: theme.tokens.accentPrimary)
-                section("Recently touched", result.recent, color: theme.tokens.accentSecondary)
+                if isEmpty {
+                    // Previously every bucket being empty rendered as a capture
+                    // box above blank space, with nothing explaining why.
+                    AinkradEmptyState(icon: "checkmark.circle",
+                                      title: "Nothing needs you",
+                                      message: "No overdue, due-today, or in-progress work "
+                                             + "across your active projects.")
+                        .padding(.top, AinkradSpacing.xl)
+                } else {
+                    section("Overdue", result.overdue, status: .danger)
+                    section("Due today", result.dueToday, status: .warning)
+                    section("In progress", result.active, status: .neutral)
+                    section("Recently touched", result.recent, status: .neutral)
+                }
             }
-            .padding(16)
+            .padding(AinkradSpacing.lg)
+        }
+        .onChange(of: store.revision, initial: true) { _, revision in
+            cache = (revision, rebuild())
+            // Re-seed only when the current target has left the active list, so
+            // a deliberate choice survives unrelated mutations.
+            if !store.activeProjects.contains(where: { $0.id == captureTargetID }),
+               let first = store.activeProjects.first?.id {
+                captureTargetID = first
+            }
         }
     }
 
+    private var isEmpty: Bool {
+        result.overdue.isEmpty && result.dueToday.isEmpty
+            && result.active.isEmpty && result.recent.isEmpty
+    }
+
     private var capture: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                TextField("Capture — e.g. bug: auth loops #backend !!", text: $captureText)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(submitCapture)
-                Picker("", selection: $captureTarget) {
-                    Text("Project").tag(UUID?.none)
-                    ForEach(store.activeProjects) { Text($0.name).tag(UUID?.some($0.id)) }
-                }
-                .labelsHidden()
-                .frame(width: 160)
+        HStack(spacing: AinkradSpacing.sm) {
+            AinkradTextField(text: $captureText,
+                             placeholder: "Capture — e.g. bug: auth loops #backend !!")
+                .onSubmit(submitCapture)
+            AinkradSelect(items: store.activeProjects.map(\.id),
+                          selection: $captureTargetID) { id in
+                // Also the zero-active-projects label: nothing matches, so the
+                // trigger reads "Project", as the old Picker's placeholder tag did.
+                store.activeProjects.first { $0.id == id }?.name ?? "Project"
             }
-            if let captureError {
-                Text(captureError).font(.caption).foregroundStyle(theme.statusColors.danger)
+            .frame(width: 160)
+            AinkradIconButton(systemName: "return", size: 16, tooltip: "Capture") {
+                submitCapture()
             }
         }
     }
 
     private func submitCapture() {
         let parsed = QuickCapture.parse(captureText)
-        guard !parsed.title.isEmpty, let projectID = captureTarget ?? store.activeProjects.first?.id
-        else { return }
+        guard !parsed.title.isEmpty else { return }
+        // Selection first, then the first active project — an unseeded target
+        // still captures somewhere. With no active project at all there is
+        // nowhere to put it, and silence would look like a dropped capture.
+        guard let projectID = store.activeProjects.first(where: { $0.id == captureTargetID })?.id
+            ?? store.activeProjects.first?.id else {
+            report("Create a project before capturing.", .danger)
+            return
+        }
         // Capture files under the project's first epic, creating an "Inbox"
         // epic when there is none — a captured task with no parent would
         // violate the epic-at-root rule and be rejected.
@@ -136,11 +184,10 @@ struct TodaySurface: View {
             item.priority = parsed.priority
             try store.updateItem(item, actor: .user)
             captureText = ""
-            captureError = nil
         } catch let error as QuestError {
-            captureError = error.message
+            report(error.message, .danger)
         } catch {
-            captureError = error.localizedDescription
+            report(error.localizedDescription, .danger)
         }
     }
 
@@ -152,20 +199,26 @@ struct TodaySurface: View {
     }
 
     @ViewBuilder
-    private func section(_ title: String, _ items: [WorkItem], color: Color) -> some View {
+    private func section(_ title: String, _ items: [WorkItem], status: AinkradStatus) -> some View {
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.headline).foregroundStyle(color)
-                ForEach(items) { item in
-                    Button { onOpen(item) } label: {
-                        HStack {
-                            Image(systemName: icon(for: item.type))
-                            Text(item.title)
-                            Spacer()
-                        }
+            AinkradSectionFrame(title: title) {
+                VStack(spacing: AinkradSpacing.xs) {
+                    ForEach(items) { item in
+                        AinkradListRow(onTap: { onOpen(item) },
+                                       leading: {
+                                           AinkradIconGlyph(systemName: icon(for: item.type))
+                                       },
+                                       title: item.title,
+                                       trailing: {
+                                           HStack(spacing: AinkradSpacing.xs) {
+                                               AinkradBadge(text: item.type.rawValue,
+                                                            status: status)
+                                               ForEach(item.labels, id: \.self) {
+                                                   AinkradChip(label: $0)
+                                               }
+                                           }
+                                       })
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(theme.tokens.foreground)
                 }
             }
         }

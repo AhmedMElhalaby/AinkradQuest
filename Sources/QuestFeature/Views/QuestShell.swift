@@ -157,7 +157,7 @@ struct QuestShellContent: View {
         ZStack {
             switch surface {
             case .today:
-                TodaySurface(store: store, theme: theme, onOpen: open)
+                TodaySurface(store: store, report: { report($0, status: $1) }, onOpen: open)
             case .overview, .list, .board, .timeline:
                 if let id = selectedProject, let document = store.openProject(id) {
                     switch surface {
