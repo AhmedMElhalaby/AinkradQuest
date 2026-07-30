@@ -4,3 +4,6 @@ dist/
 DerivedData/
 *.xcodeproj
 .DS_Store
+
+# CLI build scratch (ainkrad build/dev)
+.ainkrad-build/

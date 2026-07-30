@@ -14,10 +14,17 @@ settings:
 packages:
   AinkradAppKit:
     url: https://github.com/AhmedMElhalaby/AinkradAppKit
-    # Must be <= the revision the HOST embeds. A plugin built against a newer
-    # SDK than the host ships cannot resolve its symbols and dies at
-    # `Bundle.load()`. This is the host's current pin.
-    revision: d5d994bdd8e79d530410a1c370657fa593fa4ce6
+    # Must be EXACTLY the revision the host's build checks out — not merely "<=",
+    # which is the inherited claim that caused a day of misdiagnosis. Read the
+    # truth from the host, never from this comment:
+    #   git -C ../Ainkrad/build/SourcePackages/checkouts/AinkradAppKit rev-parse HEAD
+    # 98cb823 = "Merge feat/settings-kit-composition" — the revision the host's
+    # build actually checks out. The previous pin (d5d994b, one day older) built
+    # and tested fine but died at `Bundle.load()`: `AinkradFormRow`'s init gained
+    # defaulted parameters in 98cb823, so the mangled symbol Quest linked against
+    # (`init(title:help:control:)`) no longer exists in the framework the host
+    # embeds. Source compiled either way — only linking told the truth.
+    revision: 98cb8235d52a7eac51dae8948e8e3c9d19884aac
 targets:
   QuestFeature:
     type: library.static
