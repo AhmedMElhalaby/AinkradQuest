@@ -15,6 +15,12 @@ struct SurfaceVisibilityTests {
         #expect(SurfaceVisibility.showsSwitcher(hasProject: true))
     }
 
+    @Test("the header gear is withheld with no project, offered with one")
+    func settingsGating() {
+        #expect(!SurfaceVisibility.showsProjectSettings(hasProject: false))
+        #expect(SurfaceVisibility.showsProjectSettings(hasProject: true))
+    }
+
     @Test("Today is never offered in the switcher — it lives in the sidebar")
     func todayNotInSwitcher() {
         #expect(!SurfaceVisibility.offered(hasProject: true).contains(.today))

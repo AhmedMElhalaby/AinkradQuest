@@ -72,10 +72,18 @@ struct TodaySurface: View {
     /// authoritative behind a persistent banner). Skipping invalidation on a
     /// failed persist would make Today show stale data while the banner
     /// promised the change was kept.
-    @State private var cache: (revision: Int, result: TodayInbox.Result)?
+    ///
+    /// Invalidation is push-only: `.onChange(of: store.revision, initial: true)`
+    /// below overwrites this, and the read below does NOT re-check the revision.
+    /// That is deliberate, not an oversight — a read-side staleness guard would
+    /// have to return the empty result for the one body pass between a mutation
+    /// and the `onChange`, flashing the "Nothing needs you" empty state on every
+    /// capture. The cache therefore stores the result alone: a recorded revision
+    /// nothing compares would only imply a guard that is not here.
+    @State private var cache: TodayInbox.Result?
 
     private var result: TodayInbox.Result {
-        cache?.result ?? TodayInbox.Result(overdue: [], dueToday: [], active: [], recent: [])
+        cache ?? TodayInbox.Result(overdue: [], dueToday: [], active: [], recent: [])
     }
 
     /// Merged per-project inbox results. Each project is judged against its
@@ -127,8 +135,8 @@ struct TodaySurface: View {
             }
             .padding(AinkradSpacing.lg)
         }
-        .onChange(of: store.revision, initial: true) { _, revision in
-            cache = (revision, rebuild())
+        .onChange(of: store.revision, initial: true) { _, _ in
+            cache = rebuild()
             // Re-seed only when the current target has left the active list, so
             // a deliberate choice survives unrelated mutations.
             if !store.activeProjects.contains(where: { $0.id == captureTargetID }),
@@ -175,14 +183,24 @@ struct TodaySurface: View {
             report("Create a project before capturing.", .danger)
             return
         }
-        // Capture files under the project's first epic, creating an "Inbox"
-        // epic when there is none — a captured task with no parent would
-        // violate the epic-at-root rule and be rejected.
+        // Capture files under the project's Inbox epic, creating one when there
+        // is none — a captured task with no parent would violate the
+        // epic-at-root rule and be rejected.
+        //
+        // The opening status comes from the target project's OWN scheme:
+        // `StatusSchemeEditor` lets the user remove or rename `todo`, and the
+        // store rejects an unknown status, so a hardcoded id would turn every
+        // submit into a danger toast with no way to capture into that project.
+        guard let document = store.openProject(projectID),
+              let statusID = document.project.statusScheme.openingStatusID else {
+            report("This project has no statuses to open an item in.", .danger)
+            return
+        }
         do {
-            let epicID = try inboxEpic(in: projectID)
+            let epicID = try inboxEpic(in: projectID, statusID: statusID)
             var item = try store.createItem(projectID: projectID, parentID: epicID,
                                             type: parsed.type, title: parsed.title,
-                                            statusID: "todo", actor: .user)
+                                            statusID: statusID, actor: .user)
             item.labels = parsed.labels
             item.priority = parsed.priority
             try store.updateItem(item, actor: .user)
@@ -194,11 +212,18 @@ struct TodaySurface: View {
         }
     }
 
-    private func inboxEpic(in projectID: UUID) throws -> UUID {
-        let epics = store.items(in: projectID).filter { $0.type == .epic }
-        if let inbox = epics.first(where: { $0.title == "Inbox" }) ?? epics.first { return inbox.id }
-        return try store.createItem(projectID: projectID, parentID: nil, type: .epic,
-                                    title: "Inbox", statusID: "todo", actor: .user).id
+    /// Identical resolution to `ListSurface`'s add-item, by construction: both
+    /// call `InboxEpic`. This copy used to fall back to an arbitrary first epic
+    /// and skipped the soft-delete filter, so a capture could land under a
+    /// trashed epic and disappear.
+    private func inboxEpic(in projectID: UUID, statusID: String) throws -> UUID {
+        switch InboxEpic.resolve(in: store.allItems(in: projectID)) {
+        case .existing(let id):
+            return id
+        case .create:
+            return try store.createItem(projectID: projectID, parentID: nil, type: .epic,
+                                        title: InboxEpic.title, statusID: statusID, actor: .user).id
+        }
     }
 
     @ViewBuilder

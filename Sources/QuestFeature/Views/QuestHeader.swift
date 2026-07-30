@@ -9,6 +9,9 @@ struct QuestHeader: View {
     @Binding var searchText: String
     var searchFocused: FocusState<Bool>.Binding
     let showsSwitcher: Bool
+    /// The gear acts on the selected project, so it is withheld — not merely
+    /// inert — when there is none.
+    let showsSettings: Bool
     let onNew: () -> Void
     let onSettings: () -> Void
     let onTrash: () -> Void
@@ -27,7 +30,10 @@ struct QuestHeader: View {
                 // equivalent are attached explicitly — `.help` alone is
                 // mouse-only, and these three buttons are icon-only.
                 iconAction("plus", "New", onNew)
-                iconAction("gearshape", "Project settings", onSettings)
+                if showsSettings {
+                    iconAction("gearshape", "Project settings", onSettings)
+                        .transition(.opacity)
+                }
                 iconAction("trash", "Trash", onTrash)
             }
 
@@ -40,6 +46,7 @@ struct QuestHeader: View {
         .padding(.horizontal, AinkradSpacing.md)
         .padding(.vertical, AinkradSpacing.sm)
         .animation(AinkradMotion.present, value: showsSwitcher)
+        .animation(AinkradMotion.present, value: showsSettings)
     }
 
     private func iconAction(_ systemName: String, _ label: String,

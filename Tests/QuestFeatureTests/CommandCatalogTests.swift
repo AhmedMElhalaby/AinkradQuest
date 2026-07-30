@@ -9,18 +9,28 @@ struct CommandCatalogTests {
                        kind: .software, state: .active, updatedAt: Date())
     }
 
-    @Test("with no project selected, no surface or status commands are offered")
+    @Test("with no project selected, no surface, status or settings command is offered")
     func noProject() {
         let entries = CommandCatalog.entries(projects: [], hasProject: false,
                                              statuses: StatusScheme.softwareDefault.statuses)
         #expect(!entries.contains { if case .openSurface = $0.action { return true } else { return false } })
         #expect(!entries.contains { if case .setStatus = $0.action { return true } else { return false } })
+        // Deliberately changed: `openSettings` used to be listed here
+        // unconditionally, and choosing it with nothing selected did nothing at
+        // all. It is project-scoped, like `newItem`.
+        #expect(!entries.contains { $0.action == .openSettings })
     }
 
-    @Test("global commands are always offered")
+    @Test("truly global commands are always offered")
     func globals() {
         let ids = Set(CommandCatalog.entries(projects: [], hasProject: false, statuses: []).map(\.id))
-        #expect(ids.isSuperset(of: ["newProject", "openTrash", "openSettings"]))
+        #expect(ids.isSuperset(of: ["newProject", "openTrash"]))
+    }
+
+    @Test("project settings is offered once a project is selected")
+    func settingsGated() {
+        let entries = CommandCatalog.entries(projects: [], hasProject: true, statuses: [])
+        #expect(entries.filter { $0.action == .openSettings }.count == 1)
     }
 
     @Test("with a project, each project surface and each status is offered")

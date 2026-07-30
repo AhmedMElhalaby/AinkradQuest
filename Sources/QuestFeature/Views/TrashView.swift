@@ -90,12 +90,25 @@ struct TrashView: View {
         .ainkradConfirmDialog(isPresented: Binding(get: { pendingPurge != nil },
                                                    set: { if !$0 { pendingPurge = nil } }),
                               title: "Delete permanently?",
-                              message: "This project and everything in it will be gone for good. This cannot be undone.",
+                              // Names the project: this is the one irreversible
+                              // action in the app, and "this project" does not
+                              // tell you WHICH row's Delete you pressed.
+                              message: purgeMessage,
                               confirmTitle: "Delete",
                               isDestructive: true) {
             if let id = pendingPurge { purgeProject(id) }
             pendingPurge = nil
         }
+    }
+
+    /// Falls back to the unnamed wording only if the summary has vanished from
+    /// under the dialog, which the confirm path never expects.
+    private var purgeMessage: String {
+        let name = pendingPurge.flatMap { id in store.trashedProjects.first { $0.id == id }?.name }
+        guard let name else {
+            return "This project and everything in it will be gone for good. This cannot be undone."
+        }
+        return "“\(name)” and everything in it will be gone for good. This cannot be undone."
     }
 
     private var header: some View {

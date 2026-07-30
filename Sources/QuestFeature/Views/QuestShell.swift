@@ -74,6 +74,8 @@ struct QuestShellContent: View {
                         searchText: $searchText,
                         searchFocused: $searchFocused,
                         showsSwitcher: SurfaceVisibility.showsSwitcher(hasProject: hasProject),
+                        showsSettings: SurfaceVisibility
+                            .showsProjectSettings(hasProject: hasProject),
                         onNew: { newItemOrProject() },
                         onSettings: { settingsProject = selectedProject },
                         onTrash: { showingTrash = true })
@@ -92,7 +94,6 @@ struct QuestShellContent: View {
             HStack(spacing: 0) {
                 QuestSidebar(store: store, documents: documents,
                              selection: $selectedProject, surface: $surface,
-                             showingTrash: $showingTrash,
                              settingsProject: $settingsProject,
                              report: { report($0, status: $1) })
                     .frame(width: 232)

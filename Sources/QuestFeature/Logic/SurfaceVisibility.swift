@@ -40,6 +40,13 @@ public enum SurfaceVisibility {
 
     public static func showsSwitcher(hasProject: Bool) -> Bool { hasProject }
 
+    /// The header's gear opens the SELECTED project's settings, so with nothing
+    /// selected it has nothing to open — it used to render anyway and assign
+    /// `nil`, which was a click that did nothing at all on the first screen a
+    /// new user sees. Gated exactly like the switcher: no affordance is offered
+    /// that cannot act.
+    public static func showsProjectSettings(hasProject: Bool) -> Bool { hasProject }
+
     /// Collapses an unreachable (surface, selection) pair to a reachable one.
     public static func resolved(surface: QuestSurface, hasProject: Bool) -> QuestSurface {
         guard surface.requiresProject, !hasProject else { return surface }

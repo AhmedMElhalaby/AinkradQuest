@@ -43,6 +43,13 @@ public enum CommandCatalog {
             entries.append(QuestCommand(id: "newItem", title: "New item",
                                         icon: "plus.circle", detail: "In this project",
                                         action: .newItem))
+            // Project-scoped, like the rest of this block: it opens the
+            // SELECTED project's settings, so with nothing selected choosing it
+            // did nothing at all — not even a toast. It used to be appended
+            // below, outside this gate.
+            entries.append(QuestCommand(id: "openSettings", title: "Project settings",
+                                        icon: "gearshape", detail: "This project",
+                                        action: .openSettings))
             for surface in SurfaceVisibility.offered(hasProject: true) {
                 entries.append(QuestCommand(id: "surface.\(surface.rawValue)",
                                             title: "Go to \(surface.title)",
@@ -67,8 +74,6 @@ public enum CommandCatalog {
         }
         entries.append(QuestCommand(id: "openTrash", title: "Trash",
                                     icon: "trash", action: .openTrash))
-        entries.append(QuestCommand(id: "openSettings", title: "Project settings",
-                                    icon: "gearshape", action: .openSettings))
         return entries
     }
 

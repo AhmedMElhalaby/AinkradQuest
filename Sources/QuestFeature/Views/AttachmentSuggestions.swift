@@ -140,9 +140,13 @@ struct AttachmentPicker: View {
                     .font(AinkradFontResolver.font(.body, typography: typo))
                     .foregroundStyle(theme.foreground)
 
+                // `AinkradCheckbox`, not a raw SwiftUI `Toggle`: the kit draws
+                // its own chamfer control and takes a plain `String` label, so
+                // the scheme glyph sits beside it rather than inside a `Label`.
                 ForEach(suggestions) { suggestion in
-                    Toggle(isOn: isChecked(suggestion)) {
-                        Label(suggestion.label, systemImage: LinkSymbol.name(for: suggestion.scheme))
+                    HStack(spacing: AinkradSpacing.sm) {
+                        AinkradIconGlyph(systemName: LinkSymbol.name(for: suggestion.scheme))
+                        AinkradCheckbox(isOn: isChecked(suggestion), label: suggestion.label)
                     }
                 }
 

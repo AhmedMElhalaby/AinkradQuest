@@ -241,15 +241,10 @@ struct ListSurface: View {
     }
 
     /// The status a newly created item opens in, derived from THIS project's
-    /// own scheme — never a hardcoded `"todo"`, which a general-kind scheme need
-    /// not contain and which the store would rightly reject. The first
-    /// not-done status, because a new item that starts life done is nonsense;
-    /// falling back to the first status only if every status is a done status.
-    /// `nil` when the scheme is empty, which suppresses the action entirely.
-    private var openingStatusID: String? {
-        let scheme = document.project.statusScheme
-        return scheme.statuses.first { !scheme.isDone($0.id) }?.id ?? scheme.statuses.first?.id
-    }
+    /// own scheme. `nil` when the scheme is empty, which suppresses the action
+    /// entirely. Shared with `TodaySurface`'s quick capture — see
+    /// `StatusScheme.openingStatusID`.
+    private var openingStatusID: String? { document.project.statusScheme.openingStatusID }
 
     /// Creates a real item and opens it, rather than merely pointing at a
     /// control the surface does not have. Filed under an epic because the
@@ -269,16 +264,17 @@ struct ListSurface: View {
         }
     }
 
-    /// CREATES the Inbox epic when there is none, rather than filing the new
-    /// item under whatever epic happens to sort first — the same resolution
-    /// `TodaySurface.inboxEpic(in:)` uses for quick capture. An arbitrary first
-    /// epic puts the user's item somewhere they did not choose and would not
-    /// think to look.
+    /// CREATES the Inbox epic when there is none. The resolution itself lives in
+    /// `InboxEpic` so this surface and `TodaySurface`'s quick capture cannot
+    /// disagree about where an item went — they had already diverged once.
     private func inboxEpic(statusID: String) throws -> UUID {
-        let epics = document.items.filter { $0.type == .epic && !$0.isDeleted }
-        if let inbox = epics.first(where: { $0.title == "Inbox" }) { return inbox.id }
-        return try store.createItem(projectID: document.project.id, parentID: nil, type: .epic,
-                                    title: "Inbox", statusID: statusID, actor: .user).id
+        switch InboxEpic.resolve(in: document.items) {
+        case .existing(let id):
+            return id
+        case .create:
+            return try store.createItem(projectID: document.project.id, parentID: nil, type: .epic,
+                                        title: InboxEpic.title, statusID: statusID, actor: .user).id
+        }
     }
 }
 

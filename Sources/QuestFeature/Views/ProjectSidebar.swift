@@ -78,7 +78,6 @@ struct QuestSidebar: View {
     let documents: PluginDocumentStore
     @Binding var selection: UUID?
     @Binding var surface: QuestSurface
-    @Binding var showingTrash: Bool
     @Binding var settingsProject: UUID?
     let report: (String, AinkradStatus) -> Void
 
@@ -217,13 +216,36 @@ struct NewProjectForm: View {
             }
             HStack {
                 Spacer()
+                // Disabled rather than silently refusing: `create()`'s empty
+                // guard used to `return` with no toast and no visible state, so
+                // a click on an empty field looked like a broken button.
                 AinkradButton(title: "Create", style: .primary) { create() }
+                    .disabled(trimmed.isEmpty)
             }
         }
+        // Return creates, as the pre-M5 sidebar footer's `.onSubmit(create)`
+        // did. Both paths are needed: `.onSubmit` fires from the focused text
+        // field, the hidden `.defaultAction` button covers Return with nothing
+        // focused — `AinkradButton` carries no keyboard shortcut of its own, so
+        // migrating off `Button` drops `.defaultAction` silently.
+        .onSubmit(create)
+        .background(defaultActionCreate)
         // `.ainkradModal` already pads its content with `AinkradSpacing.lg`;
         // repeating it here would double the inset. 420 is inside the
         // modifier's 448pt content budget (480 cap less that padding).
         .frame(width: 420)
+    }
+
+    /// Return-with-nothing-focused creates, exactly as the pre-kit
+    /// `Button("Create").keyboardShortcut(.defaultAction)` did. Disabled on an
+    /// empty name so Return matches the visibly disabled Create button.
+    private var defaultActionCreate: some View {
+        Button("") { create() }
+            .keyboardShortcut(.defaultAction)
+            .disabled(trimmed.isEmpty)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
     }
 
     private func create() {
