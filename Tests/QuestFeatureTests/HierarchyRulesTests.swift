@@ -68,6 +68,25 @@ struct HierarchyRulesTests {
         }
     }
 
+    @Test("a soft-deleted parent is refused")
+    func deletedParentRefused() {
+        var deletedEpic = WorkItem(id: epicID, projectID: projectID, parentID: nil,
+                                   type: .epic, title: "Epic", statusID: "todo")
+        deletedEpic.deletedAt = Date()
+        let items = [deletedEpic]
+
+        #expect(throws: QuestError.parentIsDeleted(epicID)) {
+            try HierarchyRules.validate(parentID: epicID, type: .task,
+                                        movingItemID: nil, in: items)
+        }
+    }
+
+    @Test("a live parent is still accepted")
+    func liveParentAccepted() throws {
+        try HierarchyRules.validate(parentID: epicID, type: .task,
+                                    movingItemID: nil, in: items)
+    }
+
     @Test("a legal placement throws nothing")
     func legal() throws {
         try HierarchyRules.validate(parentID: itemID, type: .bug, movingItemID: nil, in: items)

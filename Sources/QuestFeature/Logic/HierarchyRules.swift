@@ -35,9 +35,13 @@ public enum HierarchyRules {
             return
         }
         guard let parentID else { throw QuestError.nonEpicMustHaveParent }
-        guard items.contains(where: { $0.id == parentID }) else {
+        guard let parent = items.first(where: { $0.id == parentID }) else {
             throw QuestError.parentNotFound(parentID)
         }
+        // Existence is not enough: a soft-deleted parent is invisible on every
+        // surface, so work filed under it would be invisible too. This is the
+        // hole that let a live item end up with no live epic.
+        guard !parent.isDeleted else { throw QuestError.parentIsDeleted(parentID) }
         if let movingItemID {
             if parentID == movingItemID
                 || descendants(of: movingItemID, in: items).contains(where: { $0.id == parentID }) {

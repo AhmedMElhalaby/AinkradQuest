@@ -6,6 +6,7 @@ public enum QuestError: Error, Equatable, Sendable {
     case projectNotFound(UUID)
     case itemNotFound(UUID)
     case parentNotFound(UUID)
+    case parentIsDeleted(UUID)
     case depthExceeded(attempted: Int, maximum: Int)
     case epicMustBeRoot
     case nonEpicMustHaveParent
@@ -23,6 +24,8 @@ public enum QuestError: Error, Equatable, Sendable {
         case .projectNotFound(let id): "No project with id \(id)."
         case .itemNotFound(let id): "No work item with id \(id)."
         case .parentNotFound(let id): "No parent work item with id \(id)."
+        case .parentIsDeleted(let id):
+            "Work item \(id) is in the trash. Restore it before filing work under it."
         case .depthExceeded(let attempted, let maximum):
             "Hierarchy is capped at \(maximum) levels (epic → item → subtask); this would make \(attempted)."
         case .epicMustBeRoot: "An epic cannot have a parent."

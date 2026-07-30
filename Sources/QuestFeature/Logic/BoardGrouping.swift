@@ -53,13 +53,13 @@ extension BoardGrouping {
     /// INVARIANT this relies on: a live item is expected to always have a live
     /// owning epic, because `ProjectStore.deleteItem` cascades soft-delete onto
     /// all live descendants and `ProjectStore.restoreItem` walks ancestors back
-    /// to live. That invariant is NOT fully enforced today, though — neither
-    /// `moveItem` nor `updateItem` refuses reparenting a live item onto a
-    /// soft-deleted epic (see `ProjectStoreItemTests.moveOntoDeletedParentIsNotRefused`,
-    /// which pins the gap without fixing it — that's the store's contract).
-    /// So rather than trusting the invariant and silently dropping anything
-    /// that violates it, any live non-epic item not reachable from a live
-    /// epic is surfaced in a trailing "No epic" group instead of vanishing.
+    /// to live. `HierarchyRules.validate` now also refuses filing or reparenting
+    /// work under a soft-deleted parent, via `createItem`, `updateItem` and
+    /// `moveItem` — so this state should be unreachable through the store.
+    /// The orphan group remains anyway as a backstop for documents written
+    /// before that guard existed, and for any future path that bypasses it:
+    /// any live non-epic item not reachable from a live epic is surfaced in a
+    /// trailing "No epic" group instead of silently vanishing.
     public static func groupedByEpic(items: [WorkItem], scheme: StatusScheme,
                                      filter: ItemFilter) -> [BoardGroup] {
         let epics = items.filter { $0.type == .epic && !$0.isDeleted }

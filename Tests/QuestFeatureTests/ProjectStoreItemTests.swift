@@ -187,22 +187,64 @@ struct ProjectStoreItemTests {
         }
     }
 
-    @Test("moveItem does not refuse reparenting onto a soft-deleted epic (known gap, tracked separately)")
-    func moveOntoDeletedParentIsNotRefused() throws {
+    @Test("moving an item onto a soft-deleted parent is refused")
+    func moveOntoDeletedParentIsRefused() throws {
+        let (store, project) = makeStore()
+        let epicA = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                         title: "A", statusID: "todo", actor: .user)
+        let epicB = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                         title: "B", statusID: "todo", actor: .user)
+        let item = try store.createItem(projectID: project.id, parentID: epicA.id, type: .task,
+                                        title: "T", statusID: "todo", actor: .user)
+        try store.deleteItem(epicB.id, actor: .user)
+
+        #expect(throws: QuestError.parentIsDeleted(epicB.id)) {
+            try store.moveItem(item.id, toParent: epicB.id, orderIndex: 0, actor: .user)
+        }
+        #expect(store.items(in: project.id).first { $0.id == item.id }?.parentID == epicA.id)
+    }
+
+    @Test("updateItem cannot reparent onto a soft-deleted parent either")
+    func updateOntoDeletedParentIsRefused() throws {
+        let (store, project) = makeStore()
+        let epicA = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                         title: "A", statusID: "todo", actor: .user)
+        let epicB = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                         title: "B", statusID: "todo", actor: .user)
+        var item = try store.createItem(projectID: project.id, parentID: epicA.id, type: .task,
+                                        title: "T", statusID: "todo", actor: .user)
+        try store.deleteItem(epicB.id, actor: .user)
+
+        item.parentID = epicB.id
+        #expect(throws: QuestError.parentIsDeleted(epicB.id)) {
+            try store.updateItem(item, actor: .user)
+        }
+    }
+
+    @Test("createItem cannot file work under a soft-deleted parent")
+    func createUnderDeletedParentIsRefused() throws {
         let (store, project) = makeStore()
         let epic = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
-                                        title: "M1", statusID: "todo", actor: .user)
-        let other = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
-                                         title: "M2", statusID: "todo", actor: .user)
-        let item = try store.createItem(projectID: project.id, parentID: other.id, type: .task,
-                                        title: "Task", statusID: "todo", actor: .user)
+                                        title: "E", statusID: "todo", actor: .user)
         try store.deleteItem(epic.id, actor: .user)
 
-        try store.moveItem(item.id, toParent: epic.id, orderIndex: 0, actor: .user)
+        #expect(throws: QuestError.parentIsDeleted(epic.id)) {
+            try store.createItem(projectID: project.id, parentID: epic.id, type: .task,
+                                 title: "Orphan", statusID: "todo", actor: .user)
+        }
+    }
 
-        let live = store.items(in: project.id)
-        #expect(live.contains { $0.id == item.id })
-        #expect(!live.contains { $0.id == epic.id })
-        #expect(live.first { $0.id == item.id }?.parentID == epic.id)
+    @Test("restore still works, because restoreItem does not go through validate")
+    func restoreUnaffected() throws {
+        let (store, project) = makeStore()
+        let epic = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                        title: "E", statusID: "todo", actor: .user)
+        let child = try store.createItem(projectID: project.id, parentID: epic.id, type: .task,
+                                         title: "C", statusID: "todo", actor: .user)
+        try store.deleteItem(epic.id, actor: .user)
+
+        try store.restoreItem(child.id, actor: .user)
+
+        #expect(store.items(in: project.id).count == 2)
     }
 }
