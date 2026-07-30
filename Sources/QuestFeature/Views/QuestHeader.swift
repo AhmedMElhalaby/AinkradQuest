@@ -21,10 +21,14 @@ struct QuestHeader: View {
                 AinkradSearchField(text: $searchText, placeholder: "Search items",
                                    focus: searchFocused)
                     .frame(maxWidth: 280)
-                AinkradIconButton(systemName: "plus", size: 16, tooltip: "New") { onNew() }
-                AinkradIconButton(systemName: "gearshape", size: 16,
-                                  tooltip: "Project settings") { onSettings() }
-                AinkradIconButton(systemName: "trash", size: 16, tooltip: "Trash") { onTrash() }
+                // The no-`size` initializer, so the button frame comes from the
+                // kit's own default rather than a literal here. That overload
+                // takes no `tooltip:`, so the hover hint and its VoiceOver
+                // equivalent are attached explicitly — `.help` alone is
+                // mouse-only, and these three buttons are icon-only.
+                iconAction("plus", "New", onNew)
+                iconAction("gearshape", "Project settings", onSettings)
+                iconAction("trash", "Trash", onTrash)
             }
 
             if showsSwitcher {
@@ -36,5 +40,12 @@ struct QuestHeader: View {
         .padding(.horizontal, AinkradSpacing.md)
         .padding(.vertical, AinkradSpacing.sm)
         .animation(AinkradMotion.present, value: showsSwitcher)
+    }
+
+    private func iconAction(_ systemName: String, _ label: String,
+                            _ action: @escaping () -> Void) -> some View {
+        AinkradIconButton(systemName: systemName, action: action)
+            .help(label)
+            .accessibilityLabel(label)
     }
 }

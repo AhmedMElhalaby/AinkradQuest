@@ -118,6 +118,10 @@ struct AttachmentPicker: View {
     @Bindable var store: ProjectStore
     let projectID: UUID
     let suggestions: [AttachmentSuggestion]
+    /// The shell's single reporting path, replacing this view's own `error`
+    /// string. Toasts are mounted by `.ainkradToastHost()` on `QuestShell`,
+    /// outside the modal overlay this picker lives in, so they render above it.
+    let report: (String, AinkradStatus) -> Void
     /// Called once the sheet is dismissed, whether or not anything was attached.
     let onDone: () -> Void
 
@@ -128,7 +132,6 @@ struct AttachmentPicker: View {
     @Environment(\.ainkradStatusColors) private var statusColors
     @Environment(\.ainkradTypography) private var typo
     @State private var checked: Set<String> = []
-    @State private var error: String?
 
     var body: some View {
         AinkradCard {
@@ -143,10 +146,6 @@ struct AttachmentPicker: View {
                     }
                 }
 
-                if let error {
-                    Text(error).font(.caption).foregroundStyle(statusColors.danger)
-                }
-
                 HStack {
                     AinkradButton(title: "Attach another folder…", style: .ghost, action: attachAnother)
                     Spacer()
@@ -155,7 +154,9 @@ struct AttachmentPicker: View {
                 }
             }
         }
-        .padding()
+        // No padding here: `.ainkradModal` already insets its content by
+        // `AinkradSpacing.lg` before capping the width, so a second inset
+        // would double it and push the card toward that cap.
     }
 
     private func isChecked(_ suggestion: AttachmentSuggestion) -> Binding<Bool> {
@@ -181,10 +182,11 @@ struct AttachmentPicker: View {
             }
         }
         if failures.isEmpty {
-            error = nil
             onDone()
         } else {
-            error = failures.joined(separator: "; ")
+            // The sheet deliberately stays open on failure so the ticked
+            // suggestions are still visible next to the reported reason.
+            report(failures.joined(separator: "; "), .danger)
         }
     }
 
@@ -197,8 +199,11 @@ struct AttachmentPicker: View {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        error = FolderAttachment.attach(url: url, scheme: FolderMatch.linkKind(for: url),
-                                        to: projectID, store: store)
+        if let message = FolderAttachment.attach(url: url,
+                                                 scheme: FolderMatch.linkKind(for: url),
+                                                 to: projectID, store: store) {
+            report(message, .danger)
+        }
     }
 }
 

@@ -159,8 +159,14 @@ public final class ProjectStore {
         deletedProjectIDs.remove(id)
         trashedProjects.removeAll { $0.id == id }
         documents.removeValue(forKey: id)
-        repository.removeProject(id)
+        // The index is written BEFORE the document is destroyed. If the index
+        // write fails, the two failure modes are not symmetric: destroying the
+        // document first leaves an index entry pointing at a project whose file
+        // is gone — it shows up in the trash and then fails `restoreProject`
+        // with `projectNotFound`, a dead row the user cannot clear. Saving
+        // first leaves at most a stray file that nothing references.
         saveIndex()
+        repository.removeProject(id)
         bumpRevision()
     }
 

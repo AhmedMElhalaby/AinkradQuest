@@ -64,6 +64,9 @@ struct QuestShellContent: View {
     }
 
     var body: some View {
+        // `spacing: 0` is a structural absence of a gap, not a spacing value:
+        // the header, banner and body are flush by design, and the smallest
+        // token (`AinkradSpacing.xs`) would open a seam between them.
         VStack(spacing: 0) {
             QuestHeader(trail: BreadcrumbTrail.items(projectName: projectName,
                                                      surface: surface, sheet: nil),
@@ -84,6 +87,8 @@ struct QuestShellContent: View {
                     .padding(.top, AinkradSpacing.sm)
             }
 
+            // Also a structural zero: the `Divider()` below is the separation
+            // between sidebar and content, so any gap here would float it.
             HStack(spacing: 0) {
                 QuestSidebar(store: store, documents: documents,
                              selection: $selectedProject, surface: $surface,
@@ -138,7 +143,8 @@ struct QuestShellContent: View {
                 // picker's `@State`. Keyed like the other item-derived
                 // presentations in this file.
                 AttachmentPicker(store: store, projectID: state.projectID,
-                                 suggestions: state.suggestions) { suggestionState = nil }
+                                 suggestions: state.suggestions,
+                                 report: { report($0, status: $1) }) { suggestionState = nil }
                     .id(state.projectID)
             }
         }

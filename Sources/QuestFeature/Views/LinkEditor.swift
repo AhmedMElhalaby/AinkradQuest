@@ -142,8 +142,9 @@ struct LinkListView: View {
                     // pointer hover.
                     .accessibilityLabel("\(link.scheme.rawValue) link: \(link.identifier)")
                     Spacer()
-                    AinkradIconButton(systemName: "minus.circle", size: 14,
-                                      tooltip: "Remove link") { remove(link) }
+                    AinkradIconButton(systemName: "minus.circle") { remove(link) }
+                        .help("Remove link")
+                        .accessibilityLabel("Remove link")
                 }
             }
         }

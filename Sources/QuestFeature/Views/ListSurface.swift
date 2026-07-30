@@ -321,8 +321,9 @@ private struct ListRow: View {
             // `AinkradListRow`'s trailing slot also keeps them clear of that
             // row's whole-row `onTapGesture`.
             statusSelect
-            AinkradIconButton(systemName: "square.and.pencil", size: 14,
-                              tooltip: "Details", action: openEditor)
+            AinkradIconButton(systemName: "square.and.pencil", action: openEditor)
+                .help("Details")
+                .accessibilityLabel("Details")
         }
         .ainkradContextMenu([
             AinkradMenuItem(title: "Rename", systemName: "pencil", action: beginRename),

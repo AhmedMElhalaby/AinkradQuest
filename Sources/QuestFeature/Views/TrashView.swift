@@ -75,10 +75,15 @@ struct TrashView: View {
                 }
             }
         }
-        .padding(AinkradSpacing.lg)
-        // A deliberate fixed size, inside `.ainkradModal`'s 480pt width cap, so
-        // the trash does not reflow with the pane behind it.
-        .frame(width: 460, height: 440)
+        // No padding of its own: `AinkradModalModifier` already applies
+        // `.padding(AinkradSpacing.lg)` to its content, so a second one here
+        // would double the inset.
+        //
+        // A deliberate fixed size so the trash does not reflow with the pane
+        // behind it. The modifier pads BEFORE it caps (`.padding(.lg)` then
+        // `.frame(maxWidth: 480)`), so the content budget is 480 - 2*16 = 448
+        // and anything wider has its panel border drawn over the content.
+        .frame(width: 440, height: 440)
         // Attached at THIS view's root, not inside a row or the scroll view:
         // the kit dims and centres the dialog within the view it modifies, so
         // an inner attachment would scope the scrim to that inner box.
@@ -98,7 +103,9 @@ struct TrashView: View {
             AinkradSectionHeader(title: "Trash",
                                  subtitle: "Restore an item, or delete it permanently.")
                 .frame(maxWidth: .infinity, alignment: .leading)
-            AinkradIconButton(systemName: "xmark", size: 16, tooltip: "Close", action: onClose)
+            AinkradIconButton(systemName: "xmark", action: onClose)
+                .help("Close")
+                .accessibilityLabel("Close")
         }
     }
 

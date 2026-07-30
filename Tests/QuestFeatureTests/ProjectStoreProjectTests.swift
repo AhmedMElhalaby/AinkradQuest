@@ -211,7 +211,12 @@ struct ProjectStoreProjectTests {
         let project = store.createProject(name: "Legacy", kind: .general, actor: .user)
         try store.deleteProject(project.id, actor: .user)
 
+        let before = store.revision
         try store.purgeProject(project.id)
+        // `revision` is what every view observes to redraw. A purge that
+        // removed a project without advancing it would leave the trash
+        // rendering a row that no longer exists.
+        #expect(store.revision > before)
 
         #expect(store.trashedProjects.isEmpty)
         #expect(store.projects.isEmpty)
@@ -230,10 +235,16 @@ struct ProjectStoreProjectTests {
         let store = makeStore()
         let project = store.createProject(name: "Optimus", kind: .general, actor: .user)
 
+        let before = store.revision
         #expect(throws: QuestError.projectNotInTrash(project.id)) {
             try store.purgeProject(project.id)
         }
         #expect(store.projects.map(\.name) == ["Optimus"])
+        // The counter's contract: it advances only for a mutation that passed
+        // validation and was applied in memory. A refused purge changed
+        // nothing, so a bump here would be a redraw advertising a write that
+        // never happened.
+        #expect(store.revision == before)
     }
 
     @Test("purging an unknown project throws")

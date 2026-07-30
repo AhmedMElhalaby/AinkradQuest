@@ -140,10 +140,11 @@ struct StatusSchemeEditor: View {
                                       label: { $0.title },
                                       swatch: { $0.color(tokens: theme,
                                                          statusColors: statusColors) })
-                        AinkradIconButton(systemName: "minus.circle", size: 14,
-                                          tooltip: "Remove status") {
+                        AinkradIconButton(systemName: "minus.circle") {
                             drafts.removeAll { $0.id == draft.id }
                         }
+                        .help("Remove status")
+                        .accessibilityLabel("Remove status")
                     }
                 }
                 .onMove { drafts.move(fromOffsets: $0, toOffset: $1) }

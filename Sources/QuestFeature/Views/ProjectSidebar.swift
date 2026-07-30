@@ -220,7 +220,9 @@ struct NewProjectForm: View {
                 AinkradButton(title: "Create", style: .primary) { create() }
             }
         }
-        .padding(AinkradSpacing.lg)
+        // `.ainkradModal` already pads its content with `AinkradSpacing.lg`;
+        // repeating it here would double the inset. 420 is inside the
+        // modifier's 448pt content budget (480 cap less that padding).
         .frame(width: 420)
     }
 

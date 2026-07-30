@@ -30,8 +30,10 @@ struct QuestCommandMenu: View {
                                highlight: $highlight,
                                handlesKeyPresses: true)
         }
-        .padding(AinkradSpacing.md)
-        .frame(width: 460)
+        // Presented through `.ainkradModal`, which pads its content with
+        // `AinkradSpacing.lg` and only THEN caps it at 480pt — so the content
+        // budget is 448, and this view adds no padding of its own.
+        .frame(width: 440)
         .onChange(of: selection) { _, new in
             guard let new else { return }
             selection = nil

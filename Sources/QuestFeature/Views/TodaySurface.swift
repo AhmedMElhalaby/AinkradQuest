@@ -155,9 +155,12 @@ struct TodaySurface: View {
                 store.activeProjects.first { $0.id == id }?.name ?? "Project"
             }
             .frame(width: 160)
-            AinkradIconButton(systemName: "return", size: 16, tooltip: "Capture") {
-                submitCapture()
-            }
+            // No-`size` initializer: the frame comes from the kit default, not
+            // a literal. That overload has no `tooltip:`, so the hint is
+            // attached here along with the VoiceOver label `.help` cannot give.
+            AinkradIconButton(systemName: "return") { submitCapture() }
+                .help("Capture")
+                .accessibilityLabel("Capture")
         }
     }
 
