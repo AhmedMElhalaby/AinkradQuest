@@ -14,6 +14,25 @@ struct AttachmentSuggestion: Identifiable, Equatable {
 }
 
 enum AttachmentSuggestions {
+    /// How a root's matches are classified: the projects root can yield either
+    /// a repo or a plain folder, the vault root is always folders.
+    enum RootKind {
+        case projects
+        case vault
+    }
+
+    /// Matches under ONE root. Must be called with that root's security scope
+    /// held (see `FolderBookmark.withAccess`) — it reads the directory.
+    static func candidates(projectName: String, root: URL,
+                           kind: RootKind) -> [AttachmentSuggestion] {
+        FolderMatch.candidates(for: projectName, in: root).map { url in
+            switch kind {
+            case .projects: AttachmentSuggestion(url: url, scheme: FolderMatch.linkKind(for: url))
+            case .vault: AttachmentSuggestion(url: url, scheme: .folder)
+            }
+        }
+    }
+
     /// Suggestions for a newly created project. Empty when no root is granted —
     /// that is the normal state, not an error. The per-folder picker
     /// (`FolderAttachButton`, on Overview) does not depend on this and is
@@ -22,28 +41,56 @@ enum AttachmentSuggestions {
                       vaultRoot: URL?) -> [AttachmentSuggestion] {
         var found: [AttachmentSuggestion] = []
         if let projectsRoot {
-            found += FolderMatch.candidates(for: projectName, in: projectsRoot)
-                .map { AttachmentSuggestion(url: $0, scheme: FolderMatch.linkKind(for: $0)) }
+            found += candidates(projectName: projectName, root: projectsRoot, kind: .projects)
         }
         if let vaultRoot {
-            found += FolderMatch.candidates(for: projectName, in: vaultRoot)
-                .map { AttachmentSuggestion(url: $0, scheme: .folder) }
+            found += candidates(projectName: projectName, root: vaultRoot, kind: .vault)
         }
+        return found
+    }
+
+    /// The production entry point. Each root is scanned inside its OWN
+    /// balanced access scope, so no scoped resource outlives the scan that
+    /// needed it. The resulting `AttachmentSuggestion` URLs carry no access —
+    /// they only ever become a `Link`'s path string (`FolderAttachment`), which
+    /// touches no filesystem.
+    static func build(projectName: String,
+                     in documents: PluginDocumentStore) -> [AttachmentSuggestion] {
+        var found: [AttachmentSuggestion] = []
+        found += FolderBookmark.withAccess(forKey: FolderBookmark.projectsRootKey,
+                                          in: documents) { root in
+            candidates(projectName: projectName, root: root, kind: .projects)
+        } ?? []
+        found += FolderBookmark.withAccess(forKey: FolderBookmark.vaultRootKey,
+                                         in: documents) { root in
+            candidates(projectName: projectName, root: root, kind: .vault)
+        } ?? []
         return found
     }
 }
 
 /// The one place a folder actually becomes a `Link`, shared by the
 /// suggestion sheet and the persistent Overview picker so the two cannot
-/// drift on validation or bookmarking. Builds the link through
-/// `LinkValidation.normalize` — never hand-constructed — and saves a
-/// per-attachment bookmark under `FolderBookmark.attachmentKey` so the
-/// folder stays reachable later. Returns a failure message, or `nil` on
-/// success; never `try?`.
+/// drift on validation. Builds the link through `LinkValidation.normalize` —
+/// never hand-constructed. Returns a failure message, or `nil` on success;
+/// never `try?`.
+///
+/// Deliberately saves NO per-attachment bookmark. An attachment is a recorded
+/// path, not an open capability: nothing in Quest resolves an attached folder
+/// today, and the cross-app resolution spike
+/// (`docs/findings/2026-07-30-cross-app-resolution.md`) shows the resolver that
+/// would need scoped access does not exist and is not next. Writing a bookmark
+/// blob per attachment that nothing ever reads is pure leak — every removal
+/// path (UI, `remove_link` over MCP, project delete) would have to remember to
+/// clear it, and the store exposes no key enumeration to sweep up the ones that
+/// were missed. When a resolver does arrive it can mint bookmarks then, from a
+/// real user selection, which is also the only way `.withSecurityScope` data is
+/// legitimately obtained. The two ROOT grants remain the only bookmarks Quest
+/// stores.
 @MainActor
 enum FolderAttachment {
     static func attach(url: URL, scheme: LinkScheme, to projectID: UUID,
-                       store: ProjectStore, documents: PluginDocumentStore) -> String? {
+                       store: ProjectStore) -> String? {
         switch LinkValidation.normalize(scheme: scheme, identifier: url.path,
                                         label: url.lastPathComponent, repo: nil) {
         case .invalid(let message):
@@ -51,11 +98,6 @@ enum FolderAttachment {
         case .valid(let link):
             do {
                 try store.addLink(to: .project(projectID), link: link, actor: .user)
-                // Keyed by the LINK that was actually stored, computed AFTER
-                // normalize — so the key a future reader derives from the
-                // link matches exactly what was saved here.
-                try FolderBookmark.save(url, forKey: FolderBookmark.attachmentKey(link.id),
-                                        in: documents)
                 return nil
             } catch let failure as QuestError {
                 return failure.message
@@ -76,7 +118,6 @@ struct AttachmentPicker: View {
     @Bindable var store: ProjectStore
     let projectID: UUID
     let suggestions: [AttachmentSuggestion]
-    let documents: PluginDocumentStore
     let theme: HostTheme
     /// Called once the sheet is dismissed, whether or not anything was attached.
     let onDone: () -> Void
@@ -132,7 +173,7 @@ struct AttachmentPicker: View {
         var failures: [String] = []
         for suggestion in toAttach {
             if let message = FolderAttachment.attach(url: suggestion.url, scheme: suggestion.scheme,
-                                                      to: projectID, store: store, documents: documents) {
+                                                      to: projectID, store: store) {
                 failures.append("\(suggestion.label): \(message)")
             }
         }
@@ -154,7 +195,7 @@ struct AttachmentPicker: View {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         error = FolderAttachment.attach(url: url, scheme: FolderMatch.linkKind(for: url),
-                                        to: projectID, store: store, documents: documents)
+                                        to: projectID, store: store)
     }
 }
 
@@ -167,7 +208,6 @@ struct AttachmentPicker: View {
 struct FolderAttachButton: View {
     @Bindable var store: ProjectStore
     let projectID: UUID
-    let documents: PluginDocumentStore
     let theme: HostTheme
 
     @State private var error: String?
@@ -188,6 +228,6 @@ struct FolderAttachButton: View {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         error = FolderAttachment.attach(url: url, scheme: FolderMatch.linkKind(for: url),
-                                        to: projectID, store: store, documents: documents)
+                                        to: projectID, store: store)
     }
 }

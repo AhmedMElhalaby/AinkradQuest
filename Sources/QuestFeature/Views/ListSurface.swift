@@ -81,14 +81,12 @@ struct ListSurface: View {
         .foregroundStyle(theme.tokens.foreground)
     }
 
+    /// The row owns its own context menu so a failed delete lands in that
+    /// row's inline error line, like every other per-row failure on this
+    /// surface (status change, title commit) — see `ListRow.delete()`.
     private func row(_ item: WorkItem, indent: Int) -> some View {
         ListRow(store: store, document: document, item: item, indent: indent, theme: theme,
                openEditor: { editing = item })
-        .contextMenu {
-            Button("Delete", role: .destructive) {
-                try? store.deleteItem(item.id, actor: .user)
-            }
-        }
     }
 }
 
@@ -155,11 +153,27 @@ private struct ListRow: View {
                     .foregroundStyle(theme.statusColors.danger)
             }
         }
+        .contextMenu {
+            Button("Delete", role: .destructive, action: delete)
+        }
         .onChange(of: item.title) { _, newValue in
             // The store, not this field, is the source of truth once the
             // field is not being edited — an external update (e.g. via MCP)
             // must still show up.
             if !titleFocused { title = newValue }
+        }
+    }
+
+    /// Reports failure inline instead of swallowing it: a delete refused by
+    /// the store (e.g. a rule violation) must not look like it worked. On
+    /// success the row disappears with the item, so there is nothing to clear.
+    private func delete() {
+        do {
+            try store.deleteItem(item.id, actor: .user)
+        } catch let error as QuestError {
+            errorMessage = error.message
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 

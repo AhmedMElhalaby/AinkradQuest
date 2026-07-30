@@ -21,18 +21,17 @@ struct QuestSettingsView: View {
     @Environment(\.ainkradTypography) private var typo
     @Environment(\.ainkradStatusColors) private var statusColors
     @State private var mode: PluginPresentation
-    @State private var projectsRoot: URL?
-    @State private var vaultRoot: URL?
+    /// Bumped whenever a grant is changed, to re-read `FolderBookmark.grant`.
+    /// The grants themselves are NOT cached in `@State` seeded from `init`:
+    /// this initializer re-runs on every parent re-render, and anything it
+    /// called would run with it.
+    @State private var grantRevision = 0
     @State private var error: String?
 
     init(presentation: any PluginPresentationControl, documents: PluginDocumentStore) {
         self.presentation = presentation
         self.documents = documents
         _mode = State(initialValue: presentation.current)
-        _projectsRoot = State(initialValue: FolderBookmark.resolve(
-            forKey: FolderBookmark.projectsRootKey, in: documents))
-        _vaultRoot = State(initialValue: FolderBookmark.resolve(
-            forKey: FolderBookmark.vaultRootKey, in: documents))
     }
 
     var body: some View {
@@ -59,11 +58,11 @@ struct QuestSettingsView: View {
 
                     rootRow(title: "Projects folder",
                            help: "Suggests a matching repo or folder by name when you create a project.",
-                           root: $projectsRoot, key: FolderBookmark.projectsRootKey)
+                           key: FolderBookmark.projectsRootKey)
 
                     rootRow(title: "Vault folder",
                            help: "Suggests a matching vault folder by name when you create a project.",
-                           root: $vaultRoot, key: FolderBookmark.vaultRootKey)
+                           key: FolderBookmark.vaultRootKey)
 
                     if let error {
                         Text(error).font(.caption).foregroundStyle(statusColors.danger)
@@ -75,24 +74,48 @@ struct QuestSettingsView: View {
         .onChange(of: mode) { _, newValue in presentation.set(newValue) }
     }
 
-    private func rootRow(title: String, help: String, root: Binding<URL?>,
-                         key: String) -> some View {
-        AinkradFormRow(title: title, help: help) {
+    /// Rendering this row must never acquire a scoped resource — it reads
+    /// `FolderBookmark.grant`, which resolves for display only. `grantRevision`
+    /// is read so SwiftUI re-runs the row after Choose…/Clear.
+    private func rootRow(title: String, help: String, key: String) -> some View {
+        _ = grantRevision
+        let grant = FolderBookmark.grant(forKey: key, in: documents)
+        return AinkradFormRow(title: title, help: help) {
             HStack(spacing: AinkradSpacing.sm) {
-                Text(root.wrappedValue?.path ?? "Not set")
-                    .font(AinkradFontResolver.font(.mono, typography: typo))
-                    .foregroundStyle(theme.foreground.opacity(0.8))
-                    .lineLimit(1).truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                AinkradButton(title: "Choose…", style: .secondary) { pickRoot(root, key: key) }
-                if root.wrappedValue != nil {
-                    AinkradButton(title: "Clear", style: .ghost) { clearRoot(root, key: key) }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Self.pathText(grant))
+                        .font(AinkradFontResolver.font(.mono, typography: typo))
+                        .foregroundStyle(theme.foreground.opacity(0.8))
+                        .lineLimit(1).truncationMode(.middle)
+                    // A grant that no longer resolves is NOT the same as no
+                    // grant: without this the user sees "Not set", cannot tell
+                    // why suggestions stopped, and (previously) had no Clear
+                    // button to fix it.
+                    if case .unresolvable = grant {
+                        Text("This folder can no longer be found — it was moved, renamed, or deleted. Choose it again, or clear it.")
+                            .font(.caption)
+                            .foregroundStyle(statusColors.warning)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                AinkradButton(title: "Choose…", style: .secondary) { pickRoot(key: key) }
+                // Available for a broken grant too, not just a working one.
+                if grant != .notGranted {
+                    AinkradButton(title: "Clear", style: .ghost) { clearRoot(key: key) }
                 }
             }
         }
     }
 
-    private func pickRoot(_ root: Binding<URL?>, key: String) {
+    private static func pathText(_ grant: FolderBookmark.Grant) -> String {
+        switch grant {
+        case .notGranted: "Not set"
+        case .granted(let path): path
+        case .unresolvable(let path): path ?? "Previously granted folder"
+        }
+    }
+
+    private func pickRoot(key: String) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -100,15 +123,15 @@ struct QuestSettingsView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             try FolderBookmark.save(url, forKey: key, in: documents)
-            root.wrappedValue = url
+            grantRevision += 1
             error = nil
         } catch {
             self.error = "Could not save that folder: \(error.localizedDescription)"
         }
     }
 
-    private func clearRoot(_ root: Binding<URL?>, key: String) {
+    private func clearRoot(key: String) {
         FolderBookmark.clear(forKey: key, in: documents)
-        root.wrappedValue = nil
+        grantRevision += 1
     }
 }

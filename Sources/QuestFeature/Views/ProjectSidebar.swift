@@ -146,7 +146,7 @@ struct ProjectSidebar: View {
         .background(theme.tokens.surface)
         .sheet(item: $suggestionState) { state in
             AttachmentPicker(store: store, projectID: state.projectID,
-                             suggestions: state.suggestions, documents: documents,
+                             suggestions: state.suggestions,
                              theme: theme) { suggestionState = nil }
         }
     }
@@ -164,10 +164,9 @@ struct ProjectSidebar: View {
         // project already exists and selection has already moved. With no
         // root granted — the normal case — `build` returns empty and nothing
         // further happens.
-        let projectsRoot = FolderBookmark.resolve(forKey: FolderBookmark.projectsRootKey, in: documents)
-        let vaultRoot = FolderBookmark.resolve(forKey: FolderBookmark.vaultRootKey, in: documents)
-        let suggestions = AttachmentSuggestions.build(projectName: name, projectsRoot: projectsRoot,
-                                                      vaultRoot: vaultRoot)
+        // Each granted root is scanned inside its own balanced access scope
+        // (`FolderBookmark.withAccess`); no scoped resource survives this call.
+        let suggestions = AttachmentSuggestions.build(projectName: name, in: documents)
         if !suggestions.isEmpty {
             suggestionState = SuggestionSheetState(projectID: project.id, suggestions: suggestions)
         }

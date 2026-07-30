@@ -89,24 +89,8 @@ struct LinkListView: View {
     let target: LinkTarget
     let links: [Link]
     let theme: HostTheme
-    /// Only folder attachments made via `FolderAttachment` save a bookmark
-    /// (under `FolderBookmark.attachmentKey(link.id)`), and those always
-    /// target a PROJECT — never a work item, see `FolderAttachment.attach`.
-    /// So this is `nil` for the item-link usage in `ItemEditor` (nothing to
-    /// clear there) and set for the project-link usage in `OverviewSurface`,
-    /// where a removed link's orphaned bookmark must be cleared alongside it.
-    let documents: PluginDocumentStore?
 
     @State private var error: String?
-
-    init(store: ProjectStore, target: LinkTarget, links: [Link], theme: HostTheme,
-        documents: PluginDocumentStore? = nil) {
-        self.store = store
-        self.target = target
-        self.links = links
-        self.theme = theme
-        self.documents = documents
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -136,13 +120,11 @@ struct LinkListView: View {
 
     private func remove(_ link: Link) {
         do {
+            // No bookmark to clean up: attachments store a path, not a
+            // security-scoped bookmark (see `FolderAttachment`). That is what
+            // makes every removal path — here, `remove_link` over MCP, project
+            // delete — leak-free by construction rather than by remembering.
             try store.removeLink(from: target, link: link, actor: .user)
-            // The store must not know about bookmarks, so clearing the
-            // orphaned one happens here, at the UI boundary, right after the
-            // link itself is confirmed gone. `attachmentKey` is keyed by the
-            // link id, so this is a no-op (nothing to clear) for a link that
-            // was never bookmarked in the first place.
-            if let documents { FolderBookmark.clear(forKey: FolderBookmark.attachmentKey(link.id), in: documents) }
             error = nil
         } catch let failure as QuestError {
             error = failure.message

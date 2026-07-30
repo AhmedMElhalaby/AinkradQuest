@@ -81,7 +81,7 @@ public struct QuestRootView: View {
             if let projectID = selectedProject, let document = store.openProject(projectID) {
                 switch surface {
                 case .overview: OverviewSurface(store: store, document: document,
-                                                documents: documents, theme: theme)
+                                                theme: theme)
                 case .list: ListSurface(store: store, document: document, theme: theme)
                 case .board: BoardSurface(store: store, document: document, theme: theme)
                 case .timeline: TimelineSurface(document: document, theme: theme)
