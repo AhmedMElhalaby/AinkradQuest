@@ -59,18 +59,12 @@ struct QuestShellContent: View {
 
     private var hasProject: Bool { selectedProject != nil }
 
-    private var projectName: String? {
-        selectedProject.flatMap { id in store.projects.first { $0.id == id }?.name }
-    }
-
     var body: some View {
         // `spacing: 0` is a structural absence of a gap, not a spacing value:
         // the header, banner and body are flush by design, and the smallest
         // token (`AinkradSpacing.xs`) would open a seam between them.
         VStack(spacing: 0) {
-            QuestHeader(trail: BreadcrumbTrail.items(projectName: projectName,
-                                                     surface: surface, sheet: nil),
-                        surface: $surface,
+            QuestHeader(surface: $surface,
                         searchText: $searchText,
                         searchFocused: $searchFocused,
                         showsSwitcher: SurfaceVisibility.showsSwitcher(hasProject: hasProject),

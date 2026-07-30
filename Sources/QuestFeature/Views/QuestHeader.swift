@@ -1,10 +1,13 @@
 import SwiftUI
 import AinkradAppKit
 
-/// The shell's top bar: where you are, which surface, search, and the three
-/// global actions.
+/// The shell's top bar: which surface, search, and the three global actions.
+///
+/// One row, not two. The surface switcher sits where a breadcrumb used to,
+/// which is also the only place it needs to be: the sidebar already shows
+/// which project is selected, so a trail restating it was a second row of
+/// chrome earning nothing.
 struct QuestHeader: View {
-    let trail: [String]
     @Binding var surface: QuestSurface
     @Binding var searchText: String
     var searchFocused: FocusState<Bool>.Binding
@@ -17,31 +20,29 @@ struct QuestHeader: View {
     let onTrash: () -> Void
 
     var body: some View {
-        VStack(spacing: AinkradSpacing.sm) {
-            HStack(spacing: AinkradSpacing.md) {
-                AinkradBreadcrumb(items: trail)
-                Spacer(minLength: AinkradSpacing.md)
-                AinkradSearchField(text: $searchText, placeholder: "Search items",
-                                   focus: searchFocused)
-                    .frame(maxWidth: 280)
-                // The no-`size` initializer, so the button frame comes from the
-                // kit's own default rather than a literal here. That overload
-                // takes no `tooltip:`, so the hover hint and its VoiceOver
-                // equivalent are attached explicitly — `.help` alone is
-                // mouse-only, and these three buttons are icon-only.
-                iconAction("plus", "New", onNew)
-                if showsSettings {
-                    iconAction("gearshape", "Project settings", onSettings)
-                        .transition(.opacity)
-                }
-                iconAction("trash", "Trash", onTrash)
-            }
-
+        HStack(spacing: AinkradSpacing.md) {
+            // Leading slot. On Today there is no per-project switcher, so this
+            // is empty and the search field carries the row on its own.
             if showsSwitcher {
                 AinkradSegmentedPicker(items: SurfaceVisibility.offered(hasProject: true),
                                        selection: $surface) { $0.title }
                     .transition(.opacity)
             }
+            Spacer(minLength: AinkradSpacing.md)
+            AinkradSearchField(text: $searchText, placeholder: "Search items",
+                               focus: searchFocused)
+                .frame(maxWidth: 280)
+            // The no-`size` initializer, so the button frame comes from the
+            // kit's own default rather than a literal here. That overload
+            // takes no `tooltip:`, so the hover hint and its VoiceOver
+            // equivalent are attached explicitly — `.help` alone is
+            // mouse-only, and these three buttons are icon-only.
+            iconAction("plus", "New", onNew)
+            if showsSettings {
+                iconAction("gearshape", "Project settings", onSettings)
+                    .transition(.opacity)
+            }
+            iconAction("trash", "Trash", onTrash)
         }
         .padding(.horizontal, AinkradSpacing.md)
         .padding(.vertical, AinkradSpacing.sm)
