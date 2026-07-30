@@ -42,6 +42,28 @@ struct StatusDraft: Identifiable, Equatable {
     }
 }
 
+/// Pure decision logic for `StatusSchemeEditor`, extracted so the "read the
+/// scheme fresh, not a stale capture" behavior is a parameter a test controls
+/// directly, independent of SwiftUI/View lifecycle.
+enum SchemeEditorState {
+    /// Plans a proposed set of drafts against an explicitly-passed `current`
+    /// scheme. Forwards straight to `SchemePlan.plan`; the only reason this
+    /// exists is to make `current` a parameter instead of something read off
+    /// `self.project` inside a View.
+    static func plan(current: StatusScheme, drafts: [StatusDraft],
+                     reassignments: [String: String], items: [WorkItem]) -> SchemePlan.Outcome {
+        SchemePlan.plan(current: current, proposed: StatusDraft.scheme(from: drafts),
+                        reassignments: reassignments, items: items)
+    }
+
+    /// Given a just-applied plan, the next drafts (re-seeded from
+    /// `plan.proposed`) and cleared reassignments.
+    static func afterApply(_ plan: SchemePlan.Plan) -> (drafts: [StatusDraft],
+                                                         reassignments: [String: String]) {
+        (StatusDraft.drafts(from: plan.proposed), [:])
+    }
+}
+
 /// Status-scheme editor hosted inside `ProjectSettingsSheet`. Unlike the rest
 /// of that sheet, this applies through the store IMMEDIATELY on "Apply" — it
 /// plans first via `SchemePlan.plan`, shows the plan's own `summary`, and
@@ -93,14 +115,21 @@ struct StatusSchemeEditor: View {
             }
             .frame(height: 180)
             .scrollContentBackground(.hidden)
+            // While a plan is pending, the visible rows must stay in lockstep
+            // with what the user confirmed — otherwise a post-review edit to
+            // an already-reviewed row is silently discarded when Apply
+            // re-seeds `drafts` from `plan.proposed`. Disabling every editable
+            // control keeps Cancel/Apply as the only possible actions.
+            .disabled(pendingPlan != nil)
 
             HStack {
                 TextField("New status", text: $newName)
+                    .disabled(pendingPlan != nil)
                 Button("Add") {
                     drafts.append(StatusDraft.make(name: newName, existing: drafts))
                     newName = ""
                 }
-                .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(pendingPlan != nil || newName.trimmingCharacters(in: .whitespaces).isEmpty)
             }
 
             // Any removed status that still holds items needs a destination
@@ -116,6 +145,7 @@ struct StatusSchemeEditor: View {
                     .labelsHidden()
                 }
             }
+            .disabled(pendingPlan != nil)
 
             if let error {
                 Text(error).font(.caption).foregroundStyle(theme.statusColors.danger)
@@ -170,9 +200,8 @@ struct StatusSchemeEditor: View {
     /// Plans first and shows the result. The user confirms the SAME plan value
     /// that will execute, so the preview cannot disagree with the outcome.
     private func review() {
-        switch SchemePlan.plan(current: currentScheme,
-                               proposed: StatusDraft.scheme(from: drafts),
-                               reassignments: reassignments, items: items) {
+        switch SchemeEditorState.plan(current: currentScheme, drafts: drafts,
+                                      reassignments: reassignments, items: items) {
         case .invalid(let message):
             error = message
             pendingPlan = nil
@@ -188,8 +217,9 @@ struct StatusSchemeEditor: View {
             // Re-seed from what was actually just applied, and drop any
             // leftover pre-apply edit state, so a second Apply in this same
             // sheet session diffs against reality instead of stale rows.
-            drafts = StatusDraft.drafts(from: plan.proposed)
-            reassignments = [:]
+            let next = SchemeEditorState.afterApply(plan)
+            drafts = next.drafts
+            reassignments = next.reassignments
             pendingPlan = nil
             error = nil
         } catch let failure as QuestError {
