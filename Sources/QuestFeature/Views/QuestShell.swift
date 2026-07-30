@@ -46,6 +46,9 @@ struct QuestShellContent: View {
     @State private var showingCommands = false
     @State private var settingsProject: UUID?
     @State private var showingNewProject = false
+    /// Owned by the shell, not by `NewProjectForm`, so it outlives the form the
+    /// suggestions were resolved in. See the sibling modal below.
+    @State private var suggestionState: SuggestionSheetState?
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
 
@@ -104,13 +107,32 @@ struct QuestShellContent: View {
         // sidebar button (via `\.questNewProject`), the command menu's
         // `.newProject`, the ⌘N chord and the header's "+" with no project
         // selected — flips this one flag, so none of them can drift.
-        .environment(\.questNewProject, { showingNewProject = true })
+        .environment(\.questNewProject, QuestNewProjectAction { showingNewProject = true })
         .ainkradModal(isPresented: $showingNewProject) {
             NewProjectForm(store: store, documents: documents,
-                           report: { report($0, status: $1) }) { created in
+                           report: { report($0, status: $1) }) { created, suggestions in
                 showingNewProject = false
                 selectedProject = created
                 surface = .overview
+                // Only after selection has moved, and only when there is
+                // something to offer — the normal (no granted root) case leaves
+                // this nil and shows no picker.
+                if !suggestions.isEmpty {
+                    suggestionState = SuggestionSheetState(projectID: created,
+                                                           suggestions: suggestions)
+                }
+            }
+        }
+        // A SIBLING of the new-project modal, not nested inside it: dismissing
+        // `showingNewProject` tears `NewProjectForm`'s subtree out of the
+        // overlay, so a picker presented from within the form could never
+        // render. The shell outlives the form, so this presenter is still
+        // mounted when `suggestionState` is set — one statement earlier, above.
+        .ainkradModal(isPresented: Binding(get: { suggestionState != nil },
+                                           set: { if !$0 { suggestionState = nil } })) {
+            if let state = suggestionState {
+                AttachmentPicker(store: store, projectID: state.projectID,
+                                 suggestions: state.suggestions) { suggestionState = nil }
             }
         }
         .ainkradModal(isPresented: $showingCommands) {

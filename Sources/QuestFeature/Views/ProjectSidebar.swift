@@ -36,13 +36,41 @@ struct SuggestionSheetState: Identifiable {
     var id: UUID { projectID }
 }
 
+/// Opens the shell's single new-project modal. The sidebar's "New project"
+/// button, the command menu's `.newProject`, the ⌘N chord and the header's "+"
+/// (with no project selected) all have to reach ONE presentation, and
+/// `QuestSidebar.init` is a fixed contract with no room for another binding — so
+/// the shell publishes the trigger instead.
+///
+/// A named `Equatable` wrapper rather than a bare `() -> Void`: `@Entry` warns
+/// that storing a closure invalidates every dependent on each update, because
+/// closures cannot be compared. The shell builds a fresh closure on every body
+/// pass, so that would churn the sidebar subtree. All instances compare equal
+/// because the action's behaviour never varies — only its captured `self` does.
+struct QuestNewProjectAction: Equatable {
+    /// The default is deliberately loud, matching `QuestShellContent.activate`'s
+    /// unhandled-binding trap: an inert "New project" button produces no build
+    /// error and no warning, so a sidebar mounted outside `QuestShellContent`
+    /// must fail visibly in debug rather than silently doing nothing.
+    /// Computed, not a `static let`: the type holds a closure and so is not
+    /// `Sendable`, which makes a stored global a Swift 6 concurrency error.
+    static var unwired: QuestNewProjectAction {
+        QuestNewProjectAction {
+            assertionFailure("QuestSidebar was mounted without \\.questNewProject injected — the New project button is inert")
+        }
+    }
+
+    private let perform: () -> Void
+
+    init(_ perform: @escaping () -> Void) { self.perform = perform }
+
+    func callAsFunction() { perform() }
+
+    static func == (lhs: QuestNewProjectAction, rhs: QuestNewProjectAction) -> Bool { true }
+}
+
 extension EnvironmentValues {
-    /// Opens the shell's single new-project modal. The sidebar's "New project"
-    /// button, the command menu's `.newProject`, the ⌘N chord and the header's
-    /// "+" (with no project selected) all have to reach ONE presentation, and
-    /// `QuestSidebar.init` is a fixed contract with no room for another
-    /// binding — so the shell publishes the trigger instead.
-    @Entry var questNewProject: () -> Void = {}
+    @Entry var questNewProject: QuestNewProjectAction = .unwired
 }
 
 struct QuestSidebar: View {
@@ -168,10 +196,16 @@ struct NewProjectForm: View {
     @Bindable var store: ProjectStore
     let documents: PluginDocumentStore
     let report: (String, AinkradStatus) -> Void
-    let onCreated: (UUID) -> Void
+    /// Hands the shell the new project AND its resolved attachment suggestions.
+    /// The suggestions cannot be presented from here: this form is itself the
+    /// content of the shell's `.ainkradModal`, and `AinkradModalModifier` is an
+    /// `overlay { if isPresented … }`, so the moment the shell dismisses the
+    /// new-project modal this whole subtree — including any `@State` holding a
+    /// suggestion list — is torn down before a nested modal could render. Only
+    /// a view that outlives the form can present them.
+    let onCreated: (UUID, [AttachmentSuggestion]) -> Void
 
     @State private var name = ""
-    @State private var suggestionState: SuggestionSheetState?
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
 
@@ -188,32 +222,24 @@ struct NewProjectForm: View {
         }
         .padding(AinkradSpacing.lg)
         .frame(width: 420)
-        .ainkradModal(isPresented: Binding(get: { suggestionState != nil },
-                                           set: { if !$0 { suggestionState = nil } })) {
-            if let state = suggestionState {
-                AttachmentPicker(store: store, projectID: state.projectID,
-                                 suggestions: state.suggestions) { suggestionState = nil }
-            }
-        }
     }
 
     private func create() {
         guard !trimmed.isEmpty else { return }
         let name = trimmed
+        // The store write happens FIRST and unconditionally: the project exists
+        // and is persisted before anything touches the filesystem, so nothing
+        // below can prevent or undo creation.
         let project = store.createProject(name: name, kind: .software, actor: .user)
         self.name = ""
-        onCreated(project.id)
         report("Created \(project.name)", .success)
 
-        // Suggestions never block creation: resolved AFTER the project exists
-        // and selection has moved. With no root granted — the normal case —
-        // `build` returns empty and nothing further happens. Each root is
-        // scanned inside its own balanced `FolderBookmark.withAccess` scope;
-        // no scoped resource survives this call.
+        // Suggestions are resolved AFTER the project exists and never gate it.
+        // With no root granted — the normal case — `build` returns empty and the
+        // shell selects the project and shows no picker. Each root is scanned
+        // inside its own balanced `FolderBookmark.withAccess` scope; no scoped
+        // resource survives this call.
         let suggestions = AttachmentSuggestions.build(projectName: name, in: documents)
-        if !suggestions.isEmpty {
-            suggestionState = SuggestionSheetState(projectID: project.id,
-                                                  suggestions: suggestions)
-        }
+        onCreated(project.id, suggestions)
     }
 }
