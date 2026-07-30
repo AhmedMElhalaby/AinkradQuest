@@ -163,8 +163,11 @@ struct QuestShellContent: View {
                     switch surface {
                     case .overview: OverviewSurface(store: store, document: document,
                                                     theme: theme)
-                    case .list: ListSurface(store: store, document: document, theme: theme)
-                    case .board: BoardSurface(store: store, document: document, theme: theme)
+                    case .list: ListSurface(store: store, document: document,
+                                            searchText: $searchText,
+                                            report: { report($0, status: $1) }, theme: theme)
+                    case .board: BoardSurface(store: store, document: document,
+                                              report: { report($0, status: $1) }, theme: theme)
                     case .timeline: TimelineSurface(document: document)
                     case .today: EmptyView()
                     }
