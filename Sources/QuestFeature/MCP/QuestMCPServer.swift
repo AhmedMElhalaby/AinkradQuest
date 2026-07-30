@@ -205,10 +205,15 @@ public enum QuestMCPServer {
              "Replace a project's status scheme. Send the COMPLETE ordered list of statuses "
              + "— board columns appear in this order — each with id, name, category (todo, "
              + "active or done) and colorToken. Ids are permanent: keep an existing status's "
-             + "id to rename it, and use a new id only for a genuinely new status. A scheme "
-             + "must contain at least one 'done' status. If you drop a status that still "
-             + "holds items, name where they go in 'reassignments' ({removedStatusID: "
-             + "destinationStatusID}), or the call is refused and nothing changes.",
+             + "id to rename it, and use a new id only for a genuinely new status. "
+             + "colorToken must be one of: accentPrimary, accentSecondary, success, "
+             + "warning, danger, muted. A scheme must contain at least one 'done' status. "
+             + "If you drop a status that still holds items, name where they go in "
+             + "'reassignments' ({removedStatusID: destinationStatusID}), or the call is "
+             + "refused and nothing changes. 'reassignments' may ONLY be keyed on statuses "
+             + "you are removing — it is not a way to bulk-move items between statuses that "
+             + "both remain; use set_status for that. Items moved by a reassignment "
+             + "get closedAt stamped or cleared from the DESTINATION status's category.",
              destructive: true,
              schemaJSON: schema([
                 ("projectID", "string", "The project's UUID."),

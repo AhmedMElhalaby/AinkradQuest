@@ -238,8 +238,19 @@ public final class QuestMCPOperations {
                     "update_status_scheme: each status needs id, name and category "
                     + "(todo, active or done).")
             }
+            // The colour vocabulary is a closed set, and it has to be closed on
+            // BOTH write paths. An unknown token persists, renders as a
+            // fallback, and is silently rewritten to `accentPrimary` the next
+            // time the editor opens — which the next plan then reports as a
+            // recolour the user never made.
+            let rawColor = raw["colorToken"] as? String ?? ProjectColorToken.accentPrimary.rawValue
+            guard ProjectColorToken(rawValue: rawColor) != nil else {
+                throw ArgumentError(message:
+                    "update_status_scheme: '\(rawColor)' is not a valid colorToken. "
+                    + "Valid values: \(ProjectColorToken.validNames).")
+            }
             statuses.append(Status(id: id, name: name, category: category,
-                                   colorToken: raw["colorToken"] as? String ?? "accentPrimary"))
+                                   colorToken: rawColor))
         }
 
         let reassignments = json["reassignments"] as? [String: String] ?? [:]
@@ -250,6 +261,11 @@ public final class QuestMCPOperations {
                                reassignments: reassignments, items: items) {
         case .invalid(let message):
             return failure("update_status_scheme: \(message)")
+        case .valid(let plan) where plan.changesNothing:
+            // Say so plainly instead of committing an edit that edits nothing
+            // and logging it as a scheme update.
+            return success("\(located.document.project.name)'s statuses already match "
+                           + "what you sent; nothing changed.")
         case .valid(let plan):
             try store.applyScheme(plan, to: projectID, actor: .agent)
             return success("Updated \(located.document.project.name)'s statuses: \(plan.summary).")

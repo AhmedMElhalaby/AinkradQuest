@@ -71,6 +71,30 @@ public enum SchemePlan {
 
         let removed = current.statuses.filter { proposedByID[$0.id] == nil }
 
+        // EVERY entry in the map is validated, not just the ones the loop below
+        // happens to reach.
+        //
+        // A reassignment is a consequence of a removal and nothing else. Left
+        // unchecked, an entry keyed on a SURVIVING status is a bulk item
+        // rewrite that no change kind describes: the plan reports "no changes"
+        // while `applyScheme` moves every item off that status — and if the
+        // destination is not in the scheme either, it writes a dangling
+        // statusID to disk, the one thing every other write path refuses.
+        // Sorted so the message names the same key on every run.
+        let removedIDs = Set(removed.map(\.id))
+        for (key, destination) in reassignments.sorted(by: { $0.key < $1.key }) {
+            guard removedIDs.contains(key) else {
+                return .invalid("'\(key)' is not being removed, so its items cannot be "
+                                + "reassigned. Reassignments only say where a REMOVED "
+                                + "status's items go; to move items between statuses that "
+                                + "both remain, change the items themselves.")
+            }
+            guard proposedByID[destination] != nil else {
+                return .invalid("Cannot move '\(key)'s items to '\(destination)' — "
+                                + "that status is not in the new scheme.")
+            }
+        }
+
         // Soft-deleted items carry a statusID too. Reassigning them as well is
         // what stops a restore from resurrecting an item pointing at a status
         // that no longer exists.
@@ -78,13 +102,11 @@ public enum SchemePlan {
         for status in removed {
             let holders = items.filter { $0.statusID == status.id }
             guard !holders.isEmpty else { continue }
-            guard let destination = reassignments[status.id] else {
+            // The destination itself is already known to exist in `proposed`:
+            // the loop above validates every entry in the map, occupied or not.
+            guard reassignments[status.id] != nil else {
                 return .invalid("\(status.name) still holds \(holders.count) item(s). "
                                 + "Choose where they should go before removing it.")
-            }
-            guard proposedByID[destination] != nil else {
-                return .invalid("Cannot move \(status.name)'s items to '\(destination)' — "
-                                + "that status is not in the new scheme.")
             }
             itemsReassigned += holders.count
         }

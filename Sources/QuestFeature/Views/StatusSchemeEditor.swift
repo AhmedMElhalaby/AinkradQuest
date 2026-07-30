@@ -53,7 +53,24 @@ enum SchemeEditorState {
     static func plan(current: StatusScheme, drafts: [StatusDraft],
                      reassignments: [String: String], items: [WorkItem]) -> SchemePlan.Outcome {
         SchemePlan.plan(current: current, proposed: StatusDraft.scheme(from: drafts),
-                        reassignments: reassignments, items: items)
+                        reassignments: prune(reassignments, current: current, drafts: drafts),
+                        items: items)
+    }
+
+    /// Drops reassignment entries that no longer describe a removal.
+    ///
+    /// The editor accumulates `reassignments` as rows come and go, and an entry
+    /// can outlive the removal that created it: remove "In Review", pick a
+    /// destination, then add a row named "In Review" again — `StatusDraft.make`
+    /// re-mints the same id `in_review`, so the row stops being a removal and
+    /// its picker disappears from the sheet, while the stale entry survives
+    /// invisibly and would still move every one of that status's items.
+    /// Pruning here rather than in the view means the view cannot forget.
+    static func prune(_ reassignments: [String: String], current: StatusScheme,
+                      drafts: [StatusDraft]) -> [String: String] {
+        let surviving = Set(drafts.map(\.id))
+        let removed = Set(current.statuses.map(\.id)).subtracting(surviving)
+        return reassignments.filter { removed.contains($0.key) }
     }
 
     /// Given a just-applied plan, the next drafts (re-seeded from
@@ -204,6 +221,12 @@ struct StatusSchemeEditor: View {
                                       reassignments: reassignments, items: items) {
         case .invalid(let message):
             error = message
+            pendingPlan = nil
+        case .valid(let plan) where plan.changesNothing:
+            // Nothing to confirm and nothing to write. Offering a confirm step
+            // whose only outcome is a "no changes" entry in the activity log
+            // asks the user to approve a lie.
+            error = nil
             pendingPlan = nil
         case .valid(let plan):
             error = nil

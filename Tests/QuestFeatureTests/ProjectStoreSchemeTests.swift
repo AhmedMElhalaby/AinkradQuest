@@ -127,6 +127,100 @@ struct ProjectStoreSchemeTests {
         #expect(store.items(in: project.id).first { $0.id == epic.id }?.closedAt == nil)
     }
 
+    @Test("reassigning into a done status stamps closedAt")
+    func reassignmentIntoDoneStamps() throws {
+        let (store, project) = makeStore()
+        let epic = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                        title: "E", statusID: "in_review", actor: .user)
+
+        var proposed = StatusScheme.softwareDefault
+        proposed.statuses.removeAll { $0.id == "in_review" }
+        let plan = try #require(SchemePlan.plan(
+            current: .softwareDefault, proposed: proposed,
+            reassignments: ["in_review": "done"],
+            items: store.allItems(in: project.id)).value)
+
+        try store.applyScheme(plan, to: project.id, actor: .user)
+
+        let moved = try #require(store.items(in: project.id).first { $0.id == epic.id })
+        #expect(moved.statusID == "done")
+        #expect(moved.closedAt != nil)
+    }
+
+    @Test("reassigning out of a done status clears closedAt")
+    func reassignmentOutOfDoneClears() throws {
+        let (store, project) = makeStore()
+        let epic = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                        title: "E", statusID: "todo", actor: .user)
+        try store.setStatus(epic.id, statusID: "done", actor: .user)
+        #expect(store.items(in: project.id).first { $0.id == epic.id }?.closedAt != nil)
+
+        // Remove `done` while adding another done status, so the scheme still
+        // has one, and send the items to a non-done status.
+        var proposed = StatusScheme.softwareDefault
+        proposed.statuses.removeAll { $0.id == "done" }
+        proposed.statuses.append(Status(id: "shipped", name: "Shipped",
+                                        category: .done, colorToken: "success"))
+        let plan = try #require(SchemePlan.plan(
+            current: .softwareDefault, proposed: proposed,
+            reassignments: ["done": "todo"],
+            items: store.allItems(in: project.id)).value)
+
+        try store.applyScheme(plan, to: project.id, actor: .user)
+
+        let moved = try #require(store.items(in: project.id).first { $0.id == epic.id })
+        #expect(moved.statusID == "todo")
+        #expect(moved.closedAt == nil)
+    }
+
+    @Test("an item created into a removed status AFTER planning makes the apply throw, writing nothing")
+    func staleplanIsRefused() throws {
+        let (store, project) = makeStore()
+        // Plan removing in_review while it is EMPTY, so the plan carries no
+        // reassignment for it at all.
+        let plan = try #require(planRemovingReviewEmpty(store))
+
+        // Between planning and applying — the UI's confirm gap, or an MCP call
+        // on the same @MainActor store — an item lands in the doomed status.
+        let epic = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                        title: "E", statusID: "in_review", actor: .user)
+        let before = try #require(store.openProject(project.id))
+
+        #expect(throws: QuestError.schemeWouldOrphanItems("in_review")) {
+            try store.applyScheme(plan, to: project.id, actor: .user)
+        }
+
+        let after = try #require(store.openProject(project.id))
+        #expect(after.project.statusScheme == .softwareDefault)
+        #expect(after.items.first { $0.id == epic.id }?.statusID == "in_review")
+        #expect(after.activity.count == before.activity.count)
+    }
+
+    /// A plan that removes `in_review` with NO reassignment entry — valid only
+    /// because the status held no items at plan time.
+    private func planRemovingReviewEmpty(_ store: ProjectStore) -> SchemePlan.Plan? {
+        var proposed = StatusScheme.softwareDefault
+        proposed.statuses.removeAll { $0.id == "in_review" }
+        return SchemePlan.plan(current: .softwareDefault, proposed: proposed,
+                               reassignments: [:], items: []).value
+    }
+
+    @Test("a plan that changes nothing is not committed and logs no event")
+    func noOpPlanDoesNotWrite() throws {
+        let (store, project) = makeStore()
+        let before = try #require(store.openProject(project.id))
+        let plan = try #require(SchemePlan.plan(current: .softwareDefault,
+                                               proposed: .softwareDefault,
+                                               reassignments: [:], items: []).value)
+        #expect(plan.changesNothing)
+
+        try store.applyScheme(plan, to: project.id, actor: .user)
+
+        let after = try #require(store.openProject(project.id))
+        #expect(after.activity.count == before.activity.count)
+        #expect(after.project.updatedAt == before.project.updatedAt)
+    }
+
     @Test("a trashed project is refused")
     func refusesTrashed() throws {
         let (store, project) = makeStore()

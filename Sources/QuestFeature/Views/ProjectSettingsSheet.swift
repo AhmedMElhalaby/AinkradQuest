@@ -1,37 +1,10 @@
 import SwiftUI
 import AinkradAppKit
 
-/// The colour choices a project may carry.
-///
-/// THEME TOKEN NAMES, never raw colours: the host owns the palette, so a
-/// project that stored `#FF0000` would be unreadable in one of the themes and
-/// would not follow a theme change. The set is closed because `colorToken` is a
-/// free-form `String` on `Project` — an unresolvable name would render as
-/// nothing, so the control offers only names the theme is known to define.
-enum ProjectColorToken: String, CaseIterable, Identifiable {
-    case accentPrimary, accentSecondary, success, warning, danger, muted
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .accentPrimary: "Accent"
-        case .accentSecondary: "Secondary"
-        case .success: "Green"
-        case .warning: "Amber"
-        case .danger: "Red"
-        case .muted: "Grey"
-        }
-    }
-
-    /// Maps whatever a project currently stores onto the closed set. Projects
-    /// created before this control existed hold the default `"accent"`, and a
-    /// document could carry anything; both land on `.accentPrimary` rather than
-    /// leaving the picker with no selection.
-    static func resolve(_ token: String) -> ProjectColorToken {
-        ProjectColorToken(rawValue: token) ?? .accentPrimary
-    }
-
+/// The theme lookup for `ProjectColorToken` (declared in `Models/`, so the MCP
+/// layer can validate against the same closed set without importing a view).
+/// It lives here because `HostTheme` is a view-layer concern.
+extension ProjectColorToken {
     @MainActor func color(in theme: HostTheme) -> Color {
         switch self {
         case .accentPrimary: theme.tokens.accentPrimary

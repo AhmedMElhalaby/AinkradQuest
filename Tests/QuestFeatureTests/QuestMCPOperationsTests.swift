@@ -453,6 +453,94 @@ struct QuestMCPOperationsTests {
         #expect(result.text.lowercased().contains("trash"))
     }
 
+    @Test("a reassignment for a status that is not being removed is refused, and nothing moves")
+    func schemeRefusesUnremovedReassignmentKey() async throws {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+        let epic = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                        title: "E", statusID: "todo", actor: .user)
+
+        // The full scheme unchanged, plus a reassignment naming a status that
+        // survives and a destination that does not exist. Pre-fix this
+        // returned success, said "no changes", and rewrote every todo item's
+        // statusID to a status absent from the scheme.
+        let statuses = StatusScheme.softwareDefault.statuses.map {
+            #"{"id":"\#($0.id)","name":"\#($0.name)","category":"\#($0.category.rawValue)","colorToken":"\#($0.colorToken)"}"#
+        }.joined(separator: ",")
+
+        let result = await operations.run(
+            operation: "updateStatusScheme",
+            arguments: #"""
+            {"projectID":"\#(project.id.uuidString)",
+             "statuses":[\#(statuses)],
+             "reassignments":{"todo":"nonexistent"}}
+            """#)
+
+        #expect(result.isError)
+        #expect(store.items(in: project.id).first { $0.id == epic.id }?.statusID == "todo")
+        #expect(store.openProject(project.id)?.project.statusScheme == .softwareDefault)
+    }
+
+    @Test("a reassignment used to bulk-move a surviving status's items is refused")
+    func schemeRefusesBulkMoveViaReassignment() async throws {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+        let epic = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                        title: "E", statusID: "todo", actor: .user)
+        let statuses = StatusScheme.softwareDefault.statuses.map {
+            #"{"id":"\#($0.id)","name":"\#($0.name)","category":"\#($0.category.rawValue)","colorToken":"\#($0.colorToken)"}"#
+        }.joined(separator: ",")
+
+        let result = await operations.run(
+            operation: "updateStatusScheme",
+            arguments: #"""
+            {"projectID":"\#(project.id.uuidString)",
+             "statuses":[\#(statuses)],
+             "reassignments":{"todo":"done"}}
+            """#)
+
+        #expect(result.isError)
+        #expect(store.items(in: project.id).first { $0.id == epic.id }?.statusID == "todo")
+    }
+
+    @Test("an unknown colorToken is refused with the valid values listed")
+    func schemeRefusesUnknownColorToken() async {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+
+        let result = await operations.run(
+            operation: "updateStatusScheme",
+            arguments: #"""
+            {"projectID":"\#(project.id.uuidString)",
+             "statuses":[{"id":"done","name":"Done","category":"done","colorToken":"banana"}]}
+            """#)
+
+        #expect(result.isError)
+        #expect(result.text.contains("banana"))
+        #expect(result.text.contains("accentPrimary"))
+        #expect(store.openProject(project.id)?.project.statusScheme == .softwareDefault)
+    }
+
+    @Test("a no-op scheme submission says nothing changed and logs no event")
+    func schemeNoOpDoesNotWrite() async throws {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+        let before = try #require(store.openProject(project.id)).activity.count
+        let statuses = StatusScheme.softwareDefault.statuses.map {
+            #"{"id":"\#($0.id)","name":"\#($0.name)","category":"\#($0.category.rawValue)","colorToken":"\#($0.colorToken)"}"#
+        }.joined(separator: ",")
+
+        let result = await operations.run(
+            operation: "updateStatusScheme",
+            arguments: #"""
+            {"projectID":"\#(project.id.uuidString)","statuses":[\#(statuses)]}
+            """#)
+
+        #expect(!result.isError)
+        #expect(result.text.lowercased().contains("nothing"))
+        #expect(store.openProject(project.id)?.activity.count == before)
+    }
+
     @Test("malformed status entries are an argument error, not a crash")
     func malformedStatuses() async {
         let (operations, store) = makeSubject()

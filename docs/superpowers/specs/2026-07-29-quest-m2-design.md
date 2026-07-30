@@ -60,8 +60,19 @@ items to dangle (creates data the store itself would refuse to accept on write).
 - **Recategorise** IS allowed and is retroactive: moving a status into `.done` stamps
   `closedAt` on every item in it, and moving it out clears `closedAt`. The count is shown
   before confirming, and the change is logged.
-- **Changing an `id`** is refused. It is a bulk item rewrite disguised as a rename, and
-  `id` is the stable handle items, the activity log, and the agent all rely on.
+- **An `id` cannot be edited in place.** `id` is the stable handle items, the activity log
+  and the agent all rely on, so no surface offers a way to change one. Submitting a scheme
+  where an existing id is gone and a different one is present is therefore not a rename:
+  it is a **removal plus an addition**, and it goes through the removal path in full —
+  including the reassignment requirement if the removed status still holds items.
+
+  There is deliberately no detection of "this looks like a rename". Guessing that
+  `in_review` → `qa_review` was meant as a rename, and rewriting items to match, would be
+  the bulk item rewrite this rule exists to prevent. The consequence is honest and worth
+  stating: an id that holds ZERO items can be dropped and a new one added in the same
+  submission with no reassignment needed, and the old id is then gone from the scheme.
+  Prior activity-log entries and agent references naming it still read as history; nothing
+  resurrects it.
 
 ## Architecture
 
@@ -81,15 +92,34 @@ Validation rejects:
 - a scheme with no `.done` status — completion would become unreachable
 - duplicate status ids
 - a removal that has items but no destination
-- a destination that is not present in the **proposed** scheme
-- any change to an existing status's `id`
+- a destination that is not present in the **proposed** scheme — checked for **every**
+  entry in the reassignment map, not only the entries belonging to occupied removals
+- a reassignment keyed on a status that is **not** being removed. A reassignment is only
+  ever a consequence of a removal; keyed on a surviving status it is an undescribed bulk
+  item rewrite, reported by the plan as "no changes"
+- an unknown `colorToken` (MCP boundary): the closed `ProjectColorToken` set both write
+  paths share
 
 ### 2. `ProjectStore.applyScheme(_:to:actor:)` — atomic
 
 Executes an already-validated plan against one project document: rewrite the scheme,
-reassign items off removed statuses, restamp `closedAt` where categories changed, append
-**one** `ActivityEvent` of kind `schemeUpdated`, then `commit`. Either the whole plan
-applies or nothing is touched — no partial scheme edits.
+reassign items off removed statuses (restamping each moved item's `closedAt` from its
+DESTINATION's category, exactly as `setStatus` does), restamp `closedAt` where categories
+changed, append **one** `ActivityEvent` of kind `schemeUpdated`, then `commit`. Either the
+whole plan applies or nothing is touched — no partial scheme edits.
+
+Two rules keep the invariant absolute even against a malformed or stale plan:
+
+- A reassignment entry is honoured only when its key is genuinely absent from the scheme
+  being written — the store-side half of the validation rule above.
+- A final sweep refuses to `commit` if ANY item, live or trashed, would be left pointing
+  at a status the new scheme lacks: it throws `QuestError.schemeWouldOrphanItems`. A plan
+  is a snapshot, and the store can be driven over MCP during the UI's confirm gap, so a
+  status that was empty at plan time can hold items by apply time. Throwing rather than
+  guessing a destination is deliberate: nothing is written, and the caller re-plans against
+  the scheme as it now stands.
+
+A plan whose `changesNothing` is true short-circuits: no `commit`, no activity event.
 
 `ActivityKind.schemeUpdated` returns. It has been declared twice before and deleted both
 times for having no emitter; this is the milestone that makes it real.

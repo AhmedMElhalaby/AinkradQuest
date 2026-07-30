@@ -10,6 +10,9 @@ public enum QuestError: Error, Equatable, Sendable {
     case epicMustBeRoot
     case nonEpicMustHaveParent
     case unknownStatus(String)
+    /// A scheme edit would have left items pointing at a status the new scheme
+    /// does not contain — the plan went stale between planning and applying.
+    case schemeWouldOrphanItems(String)
     case cyclicParent
     case linkNotFound(String)
     case linkAlreadyExists(String)
@@ -24,6 +27,10 @@ public enum QuestError: Error, Equatable, Sendable {
         case .epicMustBeRoot: "An epic cannot have a parent."
         case .nonEpicMustHaveParent: "Only epics may sit at the top level of a project."
         case .unknownStatus(let id): "Status '\(id)' is not in this project's status scheme."
+        case .schemeWouldOrphanItems(let id):
+            "Items still hold status '\(id)', which the new scheme does not contain — "
+            + "the project changed since this scheme edit was worked out. "
+            + "Nothing was changed; review the scheme again."
         case .cyclicParent: "An item cannot be moved under its own descendant."
         case .linkNotFound(let id): "No link \(id) on that project or item."
         case .linkAlreadyExists(let id):

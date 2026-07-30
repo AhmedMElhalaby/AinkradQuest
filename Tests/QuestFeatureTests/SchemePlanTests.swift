@@ -83,6 +83,46 @@ struct SchemePlanTests {
         #expect(outcome.value == nil)
     }
 
+    @Test("a reassignment key that is not being removed is refused")
+    func reassignmentKeyMustBeRemoved() {
+        // The whole scheme is unchanged, so nothing is being removed — yet
+        // pre-fix this validated as `.valid` and summarised "no changes" while
+        // silently rewriting every `todo` item's statusID to a status that is
+        // not in the scheme at all.
+        let outcome = SchemePlan.plan(current: current, proposed: current,
+                                      reassignments: ["todo": "nonexistent"],
+                                      items: [item("A", "todo")])
+        #expect(outcome.value == nil)
+        #expect(outcome.message?.contains("todo") == true)
+    }
+
+    @Test("a reassignment for a surviving status is refused even when the destination exists")
+    func reassignmentForSurvivingStatusRefused() {
+        // The benign-looking variant: a legal destination, so no dangling
+        // status — but it still bulk-moves every `todo` item while the summary
+        // says "no changes". A reassignment is only ever a consequence of a
+        // removal; it is not a bulk-move API.
+        let outcome = SchemePlan.plan(current: current, proposed: current,
+                                      reassignments: ["todo": "done"],
+                                      items: [item("A", "todo")])
+        #expect(outcome.value == nil)
+        #expect(outcome.message?.contains("todo") == true)
+    }
+
+    @Test("an EMPTY removal's destination is validated too, not just an occupied one's")
+    func emptyRemovalDestinationValidated() {
+        var proposed = current
+        proposed.statuses.removeAll { $0.id == "in_review" }
+
+        // No items in in_review, so the occupied-removal loop never looked at
+        // this destination pre-fix; the entry then survived into the plan.
+        let outcome = SchemePlan.plan(current: current, proposed: proposed,
+                                      reassignments: ["in_review": "nonexistent"],
+                                      items: [])
+        #expect(outcome.value == nil)
+        #expect(outcome.message?.contains("in_review") == true)
+    }
+
     @Test("moving a status into done closes its items; moving out reopens them")
     func categoryChange() throws {
         var toDone = current

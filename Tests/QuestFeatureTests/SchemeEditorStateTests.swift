@@ -66,6 +66,38 @@ struct SchemeEditorStateTests {
         #expect(revert.reopening.isEmpty)
     }
 
+    @Test("re-adding a removed status drops its stale reassignment entry")
+    func reAddedStatusLosesItsReassignment() throws {
+        let (store, project) = makeStore()
+        _ = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                 title: "E", statusID: "in_review", actor: .user)
+
+        // The UI sequence: remove "In Review", pick a destination for its
+        // items, then add a new row named "In Review". `StatusDraft.make`
+        // re-mints the SAME id, so the row is no longer a removal and its
+        // picker disappears — but `reassignments` still holds the entry.
+        var drafts = StatusDraft.drafts(from: .softwareDefault)
+        drafts.removeAll { $0.id == "in_review" }
+        let reassignments = ["in_review": "todo"]
+        drafts.append(StatusDraft.make(name: "In Review", existing: drafts))
+        #expect(drafts.contains { $0.id == "in_review" })
+
+        let plan = try #require(SchemeEditorState.plan(
+            current: .softwareDefault, drafts: drafts,
+            reassignments: reassignments, items: store.allItems(in: project.id)).value)
+
+        #expect(plan.reassignments["in_review"] == nil)
+        #expect(plan.itemsReassigned == 0)
+
+        // And applying it must leave the items where they were.
+        try store.applyScheme(plan, to: project.id, actor: .user)
+        let scheme = try #require(store.openProject(project.id)?.project.statusScheme)
+        for item in store.allItems(in: project.id) {
+            #expect(item.statusID == "in_review")
+            #expect(scheme.status(id: item.statusID) != nil)
+        }
+    }
+
     @Test("afterApply re-seeds drafts from the plan's proposed scheme and clears reassignments")
     func afterApplyReseeds() throws {
         let (store, project) = makeStore()
