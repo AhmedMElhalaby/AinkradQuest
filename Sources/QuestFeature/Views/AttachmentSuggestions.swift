@@ -51,7 +51,10 @@ enum FolderAttachment {
         case .valid(let link):
             do {
                 try store.addLink(to: .project(projectID), link: link, actor: .user)
-                try FolderBookmark.save(url, forKey: FolderBookmark.attachmentKey(UUID()),
+                // Keyed by the LINK that was actually stored, computed AFTER
+                // normalize — so the key a future reader derives from the
+                // link matches exactly what was saved here.
+                try FolderBookmark.save(url, forKey: FolderBookmark.attachmentKey(link.id),
                                         in: documents)
                 return nil
             } catch let failure as QuestError {

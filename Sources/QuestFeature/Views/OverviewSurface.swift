@@ -17,7 +17,7 @@ struct OverviewSurface: View {
 
                 group("Links") {
                     LinkListView(store: store, target: .project(document.project.id),
-                                links: document.project.links, theme: theme)
+                                links: document.project.links, theme: theme, documents: documents)
                     LinkEditor(store: store, target: .project(document.project.id), theme: theme)
                     // Always reachable, independent of any root grant and of
                     // whether a suggestion sheet ever fired for this project —

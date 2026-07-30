@@ -12,7 +12,22 @@ enum FolderBookmark {
     static let vaultRootKey = "vaultRootBookmark"
 
     /// Key for a bookmark attached to one project's folder link.
-    static func attachmentKey(_ id: UUID) -> String { "attachment-\(id.uuidString)" }
+    ///
+    /// Keyed by the LINK's id (`"scheme:repo#identifier"`, see `Link.id`),
+    /// never by a freshly minted `UUID`: a bookmark whose key cannot be
+    /// recomputed from the data it belongs to is unreachable by
+    /// construction — nothing holds the UUID anywhere else, so nothing could
+    /// ever ask for it again. The link id is stable and already unique per
+    /// target, so any caller holding the `Link` can derive the same key a
+    /// future reader would.
+    static func attachmentKey(_ linkID: String) -> String { "attachment-\(linkID)" }
+
+    /// Convenience entry point for a reader that has a `Link` rather than a
+    /// bare key — the obvious, correct way to look up an attachment's
+    /// bookmark rather than re-deriving `attachmentKey` by hand.
+    static func resolveAttachment(for link: Link, in documents: PluginDocumentStore) -> URL? {
+        resolve(forKey: attachmentKey(link.id), in: documents)
+    }
 
     static func save(_ url: URL, forKey key: String, in documents: PluginDocumentStore) throws {
         let data = try url.bookmarkData(options: .withSecurityScope,
