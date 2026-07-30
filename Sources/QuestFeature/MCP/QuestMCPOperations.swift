@@ -267,7 +267,13 @@ public final class QuestMCPOperations {
             return success("\(located.document.project.name)'s statuses already match "
                            + "what you sent; nothing changed.")
         case .valid(let plan):
-            try store.applyScheme(plan, to: projectID, actor: .agent)
+            do {
+                try store.applyScheme(plan, to: projectID, actor: .agent)
+            } catch QuestError.schemeChangedUnderneath {
+                return failure("update_status_scheme: this project's statuses changed since you "
+                               + "read them. Call get_project again and re-submit the complete "
+                               + "status list based on what it returns.")
+            }
             return success("Updated \(located.document.project.name)'s statuses: \(plan.summary).")
         }
     }

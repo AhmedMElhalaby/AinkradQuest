@@ -79,6 +79,14 @@ enum SchemeEditorState {
                                                          reassignments: [String: String]) {
         (StatusDraft.drafts(from: plan.proposed), [:])
     }
+
+    /// The editor state to adopt when an apply was refused as stale: rows
+    /// re-seeded from the scheme as it now stands, and reassignments dropped
+    /// because they referred to removals computed against the old scheme.
+    static func afterStaleRefusal(currentScheme: StatusScheme)
+        -> (drafts: [StatusDraft], reassignments: [String: String]) {
+        (StatusDraft.drafts(from: currentScheme), [:])
+    }
 }
 
 /// Status-scheme editor hosted inside `ProjectSettingsSheet`. Unlike the rest
@@ -245,6 +253,12 @@ struct StatusSchemeEditor: View {
             reassignments = next.reassignments
             pendingPlan = nil
             error = nil
+        } catch QuestError.schemeChangedUnderneath {
+            let recovered = SchemeEditorState.afterStaleRefusal(currentScheme: currentScheme)
+            drafts = recovered.drafts
+            reassignments = recovered.reassignments
+            pendingPlan = nil
+            error = QuestError.schemeChangedUnderneath.message
         } catch let failure as QuestError {
             error = failure.message
         } catch {

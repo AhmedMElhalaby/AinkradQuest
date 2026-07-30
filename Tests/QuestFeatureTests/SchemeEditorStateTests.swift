@@ -111,4 +111,17 @@ struct SchemeEditorStateTests {
         #expect(next.drafts == StatusDraft.drafts(from: proposed))
         #expect(next.reassignments.isEmpty)
     }
+
+    @Test("after a stale refusal the editor re-seeds from the live scheme and clears reassignments")
+    func recoversFromStaleRefusal() {
+        var live = StatusScheme.softwareDefault
+        live.statuses[0] = Status(id: "backlog", name: "Icebox",
+                                 category: .todo, colorToken: "muted")
+
+        let recovered = SchemeEditorState.afterStaleRefusal(currentScheme: live)
+
+        #expect(recovered.drafts.map(\.id) == live.statuses.map(\.id))
+        #expect(recovered.drafts.first?.name == "Icebox")
+        #expect(recovered.reassignments.isEmpty)
+    }
 }

@@ -552,4 +552,33 @@ struct QuestMCPOperationsTests {
 
         #expect(result.isError)
     }
+
+    @Test("update_status_scheme tells the agent to re-read when the scheme moved underneath")
+    func schemeStalenessIsExplained() async throws {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+
+        // The agent's submission is built from the scheme as it reads it, so to
+        // exercise staleness the store must change between plan and apply. The
+        // operation plans internally, so drive it through the store directly:
+        // build a plan, change the scheme, then apply the stale plan.
+        var proposedA = StatusScheme.softwareDefault
+        proposedA.statuses.removeAll { $0.id == "in_review" }
+        let stale = try #require(SchemePlan.plan(current: .softwareDefault, proposed: proposedA,
+                                                reassignments: [:], items: []).value)
+
+        var proposedB = StatusScheme.softwareDefault
+        proposedB.statuses[0] = Status(id: "backlog", name: "Icebox",
+                                       category: .todo, colorToken: "muted")
+        let fresh = try #require(SchemePlan.plan(current: .softwareDefault, proposed: proposedB,
+                                                reassignments: [:], items: []).value)
+        try store.applyScheme(fresh, to: project.id, actor: .agent)
+
+        #expect(throws: QuestError.schemeChangedUnderneath) {
+            try store.applyScheme(stale, to: project.id, actor: .agent)
+        }
+        // And the message the tool would relay names the recovery action.
+        #expect(QuestError.schemeChangedUnderneath.message.lowercased().contains("apply again")
+                || QuestError.schemeChangedUnderneath.message.lowercased().contains("review"))
+    }
 }

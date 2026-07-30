@@ -322,4 +322,24 @@ struct ProjectStoreSchemeTests {
         #expect(scheme.status(id: "in_review") == nil)
         #expect(scheme.status(id: "backlog")?.name == "Icebox")
     }
+
+    @Test("mutations unrelated to the scheme do not trip the staleness guard")
+    func guardIgnoresUnrelatedChanges() throws {
+        let (store, project) = makeStore()
+        let plan = try #require(planRemovingReview(store, project))
+
+        // Between planning and applying, mutate the project and its items in
+        // ways that do NOT touch the status scheme.
+        _ = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                 title: "New epic", statusID: "todo", actor: .user)
+        var renamed = try #require(store.openProject(project.id)).project
+        renamed.name = "Renamed Project"
+        try store.updateProject(renamed, actor: .user)
+
+        try store.applyScheme(plan, to: project.id, actor: .user)
+
+        let scheme = try #require(store.openProject(project.id)?.project.statusScheme)
+        #expect(scheme.status(id: "in_review") == nil)
+        #expect(store.openProject(project.id)?.project.name == "Renamed Project")
+    }
 }
