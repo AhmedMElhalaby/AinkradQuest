@@ -45,6 +45,7 @@ struct QuestShellContent: View {
     @State private var showingTrash = false
     @State private var showingCommands = false
     @State private var settingsProject: UUID?
+    @State private var showingNewProject = false
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
 
@@ -80,10 +81,11 @@ struct QuestShellContent: View {
             }
 
             HStack(spacing: 0) {
-                ProjectSidebar(store: store, theme: theme, documents: documents,
-                               selection: $selectedProject, surface: $surface,
-                               showingTrash: $showingTrash,
-                               settingsProject: $settingsProject)
+                QuestSidebar(store: store, documents: documents,
+                             selection: $selectedProject, surface: $surface,
+                             showingTrash: $showingTrash,
+                             settingsProject: $settingsProject,
+                             report: { report($0, status: $1) })
                     .frame(width: 232)
                 Divider()
                 content
@@ -96,6 +98,19 @@ struct QuestShellContent: View {
         .onChange(of: selectedProject) { _, _ in
             withAnimation(AinkradMotion.present) {
                 surface = SurfaceVisibility.resolved(surface: surface, hasProject: hasProject)
+            }
+        }
+        // The single new-project presentation. Every entry point — the
+        // sidebar button (via `\.questNewProject`), the command menu's
+        // `.newProject`, the ⌘N chord and the header's "+" with no project
+        // selected — flips this one flag, so none of them can drift.
+        .environment(\.questNewProject, { showingNewProject = true })
+        .ainkradModal(isPresented: $showingNewProject) {
+            NewProjectForm(store: store, documents: documents,
+                           report: { report($0, status: $1) }) { created in
+                showingNewProject = false
+                selectedProject = created
+                surface = .overview
             }
         }
         .ainkradModal(isPresented: $showingCommands) {
@@ -159,12 +174,12 @@ struct QuestShellContent: View {
     }
 
     private func newItemOrProject() {
-        // Item creation belongs to the owning surface; project creation still
-        // lives in the sidebar footer until Task 8 moves it into the shell.
+        // Item creation belongs to the owning surface; with no project there is
+        // nothing to add an item to, so "+" means "new project".
         if hasProject {
             report("Use the item list to add an item.", status: .neutral)
         } else {
-            report("Use the sidebar to create a project.", status: .neutral)
+            showingNewProject = true
         }
     }
 
@@ -176,7 +191,7 @@ struct QuestShellContent: View {
         case .openTrash: showingTrash = true
         case .openSettings: settingsProject = selectedProject
         case .newProject:
-            report("Use the sidebar to create a project.", status: .neutral)
+            showingNewProject = true
         case .newItem, .setStatus:
             // Both need a focused item, which the shell does not track; the
             // owning surface handles them. Reported rather than silently
