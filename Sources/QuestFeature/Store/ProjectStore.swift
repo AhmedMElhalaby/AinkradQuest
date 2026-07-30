@@ -147,6 +147,23 @@ public final class ProjectStore {
         commit(document)
     }
 
+    /// Hard. The other half of `deleteProject`: drops the document from disk
+    /// and the summary from the index, with no way back. Refuses anything not
+    /// already in the trash, so the irreversible path can only ever be reached
+    /// from something the user has already soft-deleted.
+    ///
+    /// Deliberately takes no `ActivityActor`: the activity feed lives INSIDE
+    /// the document being destroyed, so there is nowhere left to log to.
+    public func purgeProject(_ id: UUID) throws {
+        guard deletedProjectIDs.contains(id) else { throw QuestError.projectNotInTrash(id) }
+        deletedProjectIDs.remove(id)
+        trashedProjects.removeAll { $0.id == id }
+        documents.removeValue(forKey: id)
+        repository.removeProject(id)
+        saveIndex()
+        bumpRevision()
+    }
+
     // MARK: internals
 
     /// Writes the document and refreshes the index entry derived from it.

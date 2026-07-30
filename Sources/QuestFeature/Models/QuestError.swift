@@ -18,6 +18,9 @@ public enum QuestError: Error, Equatable, Sendable {
     case cyclicParent
     case linkNotFound(String)
     case linkAlreadyExists(String)
+    /// A permanent delete was asked for on something that is not in the trash.
+    /// Purge is irreversible, so it refuses rather than deleting a live project.
+    case projectNotInTrash(UUID)
 
     public var message: String {
         switch self {
@@ -42,6 +45,8 @@ public enum QuestError: Error, Equatable, Sendable {
         case .linkNotFound(let id): "No link \(id) on that project or item."
         case .linkAlreadyExists(let id):
             "Link \(id) is already attached to that project or item."
+        case .projectNotInTrash(let id):
+            "Project \(id) is not in the trash, so there is nothing to delete permanently."
         }
     }
 }

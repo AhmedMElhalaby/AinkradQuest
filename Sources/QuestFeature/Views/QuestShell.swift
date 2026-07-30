@@ -12,6 +12,10 @@ import AinkradAppKit
 /// `QuestShellContent` therefore lives inside the host, not around it.
 public struct QuestShell: View {
     let store: ProjectStore
+    /// Part of the host `PluginLoader`'s entry-point signature and kept for it.
+    /// No view below reads it any more: after Task 13 every surface resolves
+    /// colour from `\.ainkradTheme`/`\.ainkradStatusColors`, which the host
+    /// injects. This is the only `HostTheme` left in `Views/`.
     let theme: HostTheme
     let documents: PluginDocumentStore
 
@@ -22,21 +26,19 @@ public struct QuestShell: View {
     }
 
     public var body: some View {
-        QuestShellContent(store: store, theme: theme, documents: documents)
+        QuestShellContent(store: store, documents: documents)
             .ainkradToastHost()
     }
 }
 
 /// The shell proper. Owns selection state, routes sheets, and owns the single
 /// `report` path that will replace the per-view `@State var error: String?`
-/// scattered across four surfaces as those surfaces migrate (Tasks 8–13).
+/// scattered across four surfaces as those surfaces migrated (Tasks 8–13).
 ///
-/// After Task 12 the only `theme: HostTheme` left in this file is the one
-/// `TrashView` still needs (Task 13); every other view resolves colour from
+/// Carries no `HostTheme`: every view below resolves colour from
 /// `\.ainkradTheme`/`\.ainkradStatusColors`, which the host injects.
 struct QuestShellContent: View {
     @Bindable var store: ProjectStore
-    let theme: HostTheme
     let documents: PluginDocumentStore
 
     @State private var surface: QuestSurface = .landing
@@ -130,18 +132,28 @@ struct QuestShellContent: View {
         .ainkradModal(isPresented: Binding(get: { suggestionState != nil },
                                            set: { if !$0 { suggestionState = nil } })) {
             if let state = suggestionState {
+                // `.ainkradModal` REUSES its content view across a change of
+                // the underlying item — unlike `.sheet(item:)` — so a second
+                // project's suggestions would otherwise render into the first
+                // picker's `@State`. Keyed like the other item-derived
+                // presentations in this file.
                 AttachmentPicker(store: store, projectID: state.projectID,
                                  suggestions: state.suggestions) { suggestionState = nil }
+                    .id(state.projectID)
             }
         }
         .ainkradModal(isPresented: $showingCommands) {
             QuestCommandMenu(store: store, hasProject: hasProject,
                              statuses: currentStatuses) { perform($0) }
         }
-        // Trash keeps its existing `.sheet` presentation until Task 13 moves
-        // it; `theme` survives on this view only to feed it.
-        .sheet(isPresented: $showingTrash) {
-            TrashView(store: store, theme: theme)
+        // `.ainkradModal` injects no `DismissAction`, so — like
+        // `ProjectSettingsSheet` below — the shell owns closing this. A
+        // `dismiss()` inside `TrashView` would compile and do nothing.
+        // No `.id(...)` key is needed: the content is not item-derived, it
+        // reads the store's trash lists directly.
+        .ainkradModal(isPresented: $showingTrash) {
+            TrashView(store: store, report: { report($0, status: $1) },
+                      onClose: { showingTrash = false })
         }
         // `ProjectSettingsSheet` no longer reads `@Environment(\.dismiss)` —
         // `.ainkradModal` is an overlay and injects none — so the shell owns

@@ -32,36 +32,103 @@ enum TrashListing {
 /// promise that a person can undo them.
 struct TrashView: View {
     @Bindable var store: ProjectStore
-    let theme: HostTheme
+    /// Every failure goes to the shell's single toast path; this view owns no
+    /// error string of its own.
+    let report: (String, AinkradStatus) -> Void
+    /// `.ainkradModal` injects no `DismissAction`, so the presenter — not this
+    /// view — owns closing it.
+    let onClose: () -> Void
 
-    @State private var error: String?
+    /// The project awaiting an irreversible purge. Non-nil only while the
+    /// confirm dialog is up.
+    @State private var pendingPurge: UUID?
 
     var body: some View {
-        List {
-            if let error {
-                Text(error).font(.caption).foregroundStyle(theme.statusColors.danger)
-            }
-            Section("Projects") {
-                ForEach(store.trashedProjects) { project in
-                    HStack {
-                        Text(project.name)
-                        Spacer()
-                        Button("Restore") { restoreProject(project.id) }
-                    }
-                }
-            }
-            Section("Items") {
-                ForEach(itemEntries) { entry in
-                    HStack {
-                        Text(entry.label)
-                        Spacer()
-                        Button("Restore") { restoreItem(entry.id) }
+        VStack(alignment: .leading, spacing: AinkradSpacing.md) {
+            header
+            if store.trashedProjects.isEmpty && itemEntries.isEmpty {
+                AinkradEmptyState(icon: "trash", title: "Trash is empty",
+                                  message: "Deleted projects and items appear here until you restore or purge them.")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: AinkradSpacing.md) {
+                        if !store.trashedProjects.isEmpty {
+                            AinkradSectionFrame(title: "Projects") {
+                                VStack(spacing: AinkradSpacing.xs) {
+                                    ForEach(store.trashedProjects) { project in
+                                        projectRow(project)
+                                    }
+                                }
+                            }
+                        }
+                        if !itemEntries.isEmpty {
+                            AinkradSectionFrame(title: "Items") {
+                                VStack(spacing: AinkradSpacing.xs) {
+                                    ForEach(itemEntries) { entry in
+                                        itemRow(entry)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
-        .scrollContentBackground(.hidden)
-        .foregroundStyle(theme.tokens.foreground)
+        .padding(AinkradSpacing.lg)
+        // A deliberate fixed size, inside `.ainkradModal`'s 480pt width cap, so
+        // the trash does not reflow with the pane behind it.
+        .frame(width: 460, height: 440)
+        // Attached at THIS view's root, not inside a row or the scroll view:
+        // the kit dims and centres the dialog within the view it modifies, so
+        // an inner attachment would scope the scrim to that inner box.
+        .ainkradConfirmDialog(isPresented: Binding(get: { pendingPurge != nil },
+                                                   set: { if !$0 { pendingPurge = nil } }),
+                              title: "Delete permanently?",
+                              message: "This project and everything in it will be gone for good. This cannot be undone.",
+                              confirmTitle: "Delete",
+                              isDestructive: true) {
+            if let id = pendingPurge { purgeProject(id) }
+            pendingPurge = nil
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: AinkradSpacing.md) {
+            AinkradSectionHeader(title: "Trash",
+                                 subtitle: "Restore an item, or delete it permanently.")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            AinkradIconButton(systemName: "xmark", size: 16, tooltip: "Close", action: onClose)
+        }
+    }
+
+    private func projectRow(_ project: ProjectSummary) -> some View {
+        AinkradListRow(leading: { AinkradIconGlyph(systemName: project.icon) },
+                       title: project.name,
+                       subtitle: "Project",
+                       trailing: {
+                           HStack(spacing: AinkradSpacing.xs) {
+                               AinkradButton(title: "Restore", style: .secondary) {
+                                   restoreProject(project.id)
+                               }
+                               // Opens the confirm dialog rather than purging:
+                               // the destructive half never fires from one tap.
+                               AinkradButton(title: "Delete", style: .danger) {
+                                   pendingPurge = project.id
+                               }
+                           }
+                       })
+    }
+
+    private func itemRow(_ entry: TrashedItemEntry) -> some View {
+        AinkradListRow(leading: { AinkradIconGlyph(systemName: "checklist") },
+                       title: entry.label,
+                       subtitle: "Work item",
+                       trailing: {
+                           AinkradButton(title: "Restore", style: .secondary) {
+                               restoreItem(entry.id)
+                           }
+                       })
     }
 
     /// Items whose project is live AND items whose project is itself trashed
@@ -72,25 +139,34 @@ struct TrashView: View {
                                  allItems: store.allItems(in:))
     }
 
+    /// Restore is the reversible half, so it confirms with a `.success` toast
+    /// rather than a dialog.
     private func restoreProject(_ id: UUID) {
-        do {
-            try store.restoreProject(id, actor: .user)
-            error = nil
-        } catch let failure as QuestError {
-            error = failure.message
-        } catch {
-            self.error = error.localizedDescription
-        }
+        let name = store.trashedProjects.first { $0.id == id }?.name
+        run { try store.restoreProject(id, actor: .user) }
+            ok: { report(name.map { "Restored \($0)." } ?? "Restored the project.", .success) }
     }
 
     private func restoreItem(_ id: UUID) {
+        run { try store.restoreItem(id, actor: .user) }
+            ok: { report("Restored the item.", .success) }
+    }
+
+    /// Irreversible, and only ever reached from the confirm dialog above.
+    private func purgeProject(_ id: UUID) {
+        let name = store.trashedProjects.first { $0.id == id }?.name
+        run { try store.purgeProject(id) }
+            ok: { report(name.map { "Deleted \($0) permanently." } ?? "Deleted permanently.", .neutral) }
+    }
+
+    private func run(_ work: () throws -> Void, ok: () -> Void) {
         do {
-            try store.restoreItem(id, actor: .user)
-            error = nil
+            try work()
+            ok()
         } catch let failure as QuestError {
-            error = failure.message
+            report(failure.message, .danger)
         } catch {
-            self.error = error.localizedDescription
+            report(error.localizedDescription, .danger)
         }
     }
 }
