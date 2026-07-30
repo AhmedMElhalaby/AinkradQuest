@@ -165,7 +165,7 @@ struct QuestShellContent: View {
                                                     theme: theme)
                     case .list: ListSurface(store: store, document: document, theme: theme)
                     case .board: BoardSurface(store: store, document: document, theme: theme)
-                    case .timeline: TimelineSurface(document: document, theme: theme)
+                    case .timeline: TimelineSurface(document: document)
                     case .today: EmptyView()
                     }
                 } else {
