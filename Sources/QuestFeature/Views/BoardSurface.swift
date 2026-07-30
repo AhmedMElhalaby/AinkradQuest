@@ -5,15 +5,33 @@ import AinkradAppKit
 struct BoardSurface: View {
     @Bindable var store: ProjectStore
     let document: ProjectDocument
+    /// Owned by the shell's header, the same binding `ListSurface` reads.
+    /// `QuestHeader` renders its search field on every surface, so a board
+    /// that ignored it would leave a visible control silently doing nothing —
+    /// worse than no control at all. The board grows no field of its own.
+    @Binding var searchText: String
     let report: (String, AinkradStatus) -> Void
     /// Forwarded only because `ItemEditor` is still on its pre-M5 initializer
     /// (Task 12 migrates it), exactly as `OverviewSurface` forwards it for the
     /// link views. Nothing in this file's own layout reads it.
     let theme: HostTheme
 
+    /// The base the header's query is merged onto. No board UI sets its other
+    /// fields yet, but it is the merge base rather than dead state — see
+    /// `activeFilter`.
     @State private var filter = ItemFilter()
     @State private var editing: WorkItem?
     @State private var groupByEpic = false
+
+    /// Merged at read time, exactly as `ListSurface.activeFilter` does, so the
+    /// shell stays the single owner of the query and the two surfaces cannot
+    /// drift on what "searching" means. Both `BoardGrouping` entry points
+    /// already take an `ItemFilter`, so this needs no change to the grouping.
+    private var activeFilter: ItemFilter {
+        var merged = filter
+        merged.text = searchText
+        return merged
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AinkradSpacing.sm) {
@@ -28,7 +46,7 @@ struct BoardSurface: View {
                         // group instead of vanishing off the board.
                         ForEach(BoardGrouping.groupedByEpic(items: document.items,
                                                             scheme: document.project.statusScheme,
-                                                            filter: filter)) { group in
+                                                            filter: activeFilter)) { group in
                             VStack(alignment: .leading, spacing: AinkradSpacing.sm) {
                                 AinkradSectionHeader(title: group.epic.title,
                                                      subtitle: group.isOrphanGroup
@@ -41,7 +59,7 @@ struct BoardSurface: View {
                 } else {
                     columnStrip(BoardGrouping.columns(items: document.items,
                                                       scheme: document.project.statusScheme,
-                                                      filter: filter))
+                                                      filter: activeFilter))
                         .padding(AinkradSpacing.md)
                 }
             }

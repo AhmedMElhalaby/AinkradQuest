@@ -214,11 +214,20 @@ struct ListSurface: View {
 
     /// `nil` for `.notEmpty`/`.noProjectSelected`, which carry no action title —
     /// handing `AinkradEmptyState` an action with no title renders no button.
+    ///
+    /// `.noItems` also yields `nil` when the project's scheme has no status to
+    /// file a new item under. Offering "Add an item" there would guarantee a
+    /// failure toast from the button that promised to add one; no button at all
+    /// is the honest state.
     private func action(for reason: EmptyReason) -> (() -> Void)? {
         switch reason {
-        case .noItems: addItem
-        case .filteredOut: clearFilters
-        case .notEmpty, .noProjectSelected: nil
+        case .noItems:
+            guard openingStatusID != nil else { return nil }
+            return { addItem() }
+        case .filteredOut:
+            return { clearFilters() }
+        case .notEmpty, .noProjectSelected:
+            return nil
         }
     }
 
@@ -229,13 +238,25 @@ struct ListSurface: View {
         }
     }
 
+    /// The status a newly created item opens in, derived from THIS project's
+    /// own scheme — never a hardcoded `"todo"`, which a general-kind scheme need
+    /// not contain and which the store would rightly reject. The first
+    /// not-done status, because a new item that starts life done is nonsense;
+    /// falling back to the first status only if every status is a done status.
+    /// `nil` when the scheme is empty, which suppresses the action entirely.
+    private var openingStatusID: String? {
+        let scheme = document.project.statusScheme
+        return scheme.statuses.first { !scheme.isDone($0.id) }?.id ?? scheme.statuses.first?.id
+    }
+
     /// Creates a real item and opens it, rather than merely pointing at a
     /// control the surface does not have. Filed under an epic because the
     /// epic-at-root rule rejects a parentless task.
     private func addItem() {
+        // Guaranteed non-nil: `action(for:)` withholds this action otherwise.
+        guard let statusID = openingStatusID else { return }
         do {
-            let epicID = try inboxEpic()
-            let statusID = document.project.statusScheme.statuses.first?.id ?? "todo"
+            let epicID = try inboxEpic(statusID: statusID)
             editing = try store.createItem(projectID: document.project.id, parentID: epicID,
                                            type: .task, title: "New item",
                                            statusID: statusID, actor: .user)
@@ -246,12 +267,14 @@ struct ListSurface: View {
         }
     }
 
-    private func inboxEpic() throws -> UUID {
+    /// CREATES the Inbox epic when there is none, rather than filing the new
+    /// item under whatever epic happens to sort first — the same resolution
+    /// `TodaySurface.inboxEpic(in:)` uses for quick capture. An arbitrary first
+    /// epic puts the user's item somewhere they did not choose and would not
+    /// think to look.
+    private func inboxEpic(statusID: String) throws -> UUID {
         let epics = document.items.filter { $0.type == .epic && !$0.isDeleted }
-        if let inbox = epics.first(where: { $0.title == "Inbox" }) ?? epics.first {
-            return inbox.id
-        }
-        let statusID = document.project.statusScheme.statuses.first?.id ?? "todo"
+        if let inbox = epics.first(where: { $0.title == "Inbox" }) { return inbox.id }
         return try store.createItem(projectID: document.project.id, parentID: nil, type: .epic,
                                     title: "Inbox", statusID: statusID, actor: .user).id
     }
@@ -280,9 +303,24 @@ private struct ListRow: View {
     @Environment(\.ainkradTheme) private var theme
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: AinkradSpacing.xs) {
             Spacer().frame(width: CGFloat(max(indent, 0)) * AinkradSpacing.lg)
-            content
+            titleArea
+                .frame(maxWidth: .infinity, alignment: .leading)
+            // Deliberately SIBLINGS of `titleArea`, not children of either of
+            // its branches, and at a fixed position in this HStack. Inside the
+            // rename branch, clicking the select would blur the field, end
+            // rename, and unmount the select in the very update its floating
+            // panel opened — the panel is keyed to the select's own `@State`,
+            // so it would never appear. Hoisted here, the branch swap changes
+            // only this HStack's second child; the select and the details
+            // button keep their structural identity and stay mounted through
+            // the whole open -> choose -> close cycle. Keeping them out of
+            // `AinkradListRow`'s trailing slot also keeps them clear of that
+            // row's whole-row `onTapGesture`.
+            statusSelect
+            AinkradIconButton(systemName: "square.and.pencil", size: 14,
+                              tooltip: "Details", action: openEditor)
         }
         .ainkradContextMenu([
             AinkradMenuItem(title: "Rename", systemName: "pencil", action: beginRename),
@@ -292,7 +330,9 @@ private struct ListRow: View {
         ])
     }
 
-    @ViewBuilder private var content: some View {
+    /// The ONLY part of the row that swaps between display and rename. The
+    /// status select and the details button are siblings of this, above.
+    @ViewBuilder private var titleArea: some View {
         if isRenaming {
             // Deliberately raw SwiftUI. `AinkradListRow` renders its title as
             // static `Text`, and `AinkradTextField` exposes no focus binding,
@@ -309,7 +349,6 @@ private struct ListRow: View {
                     .onChange(of: titleFocused) { wasFocused, isFocused in
                         if wasFocused, !isFocused { finishRename() }
                     }
-                statusSelect
             }
             .padding(.horizontal, AinkradSpacing.md)
             .padding(.vertical, AinkradSpacing.sm)
@@ -327,9 +366,6 @@ private struct ListRow: View {
                            trailing: {
                                HStack(spacing: AinkradSpacing.xs) {
                                    ForEach(item.labels, id: \.self) { AinkradChip(label: $0) }
-                                   statusSelect
-                                   AinkradIconButton(systemName: "square.and.pencil", size: 14,
-                                                     tooltip: "Details", action: openEditor)
                                }
                            })
         }

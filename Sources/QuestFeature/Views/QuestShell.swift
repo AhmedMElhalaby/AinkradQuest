@@ -167,6 +167,7 @@ struct QuestShellContent: View {
                                             searchText: $searchText,
                                             report: { report($0, status: $1) }, theme: theme)
                     case .board: BoardSurface(store: store, document: document,
+                                              searchText: $searchText,
                                               report: { report($0, status: $1) }, theme: theme)
                     case .timeline: TimelineSurface(document: document)
                     case .today: EmptyView()
