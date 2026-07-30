@@ -13,6 +13,11 @@ public final class ProjectStore {
     /// Set when a write to the repository could not be completed. Views show a
     /// persistent banner while this is non-nil; the in-memory change is kept.
     public private(set) var persistenceFailure: String?
+    /// Bumped once per successful mutation. Exists so a view can memoize derived
+    /// cross-project work instead of recomputing it on every body pass — see
+    /// `TodaySurface`. Bumped only AFTER a write succeeds: a failed persist must
+    /// not advertise a change, or a cache would hold state that was never saved.
+    public private(set) var revision: Int = 0
 
     private let repository: any ProjectRepository
     /// Open documents, cached so repeated reads do not re-decode.
@@ -77,6 +82,7 @@ public final class ProjectStore {
         persist(document)
         projects.append(project.summary)
         saveIndex()
+        bumpRevision()
         return project
     }
 
@@ -145,7 +151,13 @@ public final class ProjectStore {
         persist(document)
         rebuildIndexEntry(for: document.project)
         saveIndex()
+        bumpRevision()
     }
+
+    /// Advances `revision`. Called only from paths that have already reached
+    /// their write — a domain-validation `throw` earlier in a mutating method
+    /// never reaches here, so the counter cannot advertise a rejected write.
+    func bumpRevision() { revision += 1 }
 
     /// Moves the project's summary into whichever of the two owned lists its
     /// trashed state calls for. `trashedProjects` is OWNED state, never derived
