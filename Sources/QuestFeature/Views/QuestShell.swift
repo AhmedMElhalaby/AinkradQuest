@@ -1,7 +1,33 @@
 import SwiftUI
 import AinkradAppKit
 
-/// Quest's root. Owns selection state, routes sheets, and owns the single
+/// Quest's root — deliberately a thin wrapper whose only job is to mount the
+/// toast host ABOVE the view that reads it.
+///
+/// `.ainkradToastHost()` owns its `AinkradToastCenter` in `@State` and
+/// re-injects it into its `content`'s subtree only. Applying it to the same
+/// view that reads `\.ainkradToastCenter` resolves that read *above* the
+/// modifier, handing back the `@Entry` default — an instance the host's
+/// overlay never renders, so every `report(...)` would be silently dropped.
+/// `QuestShellContent` therefore lives inside the host, not around it.
+public struct QuestShell: View {
+    let store: ProjectStore
+    let theme: HostTheme
+    let documents: PluginDocumentStore
+
+    public init(store: ProjectStore, theme: HostTheme, documents: PluginDocumentStore) {
+        self.store = store
+        self.theme = theme
+        self.documents = documents
+    }
+
+    public var body: some View {
+        QuestShellContent(store: store, theme: theme, documents: documents)
+            .ainkradToastHost()
+    }
+}
+
+/// The shell proper. Owns selection state, routes sheets, and owns the single
 /// `report` path that will replace the per-view `@State var error: String?`
 /// scattered across four surfaces as those surfaces migrate (Tasks 8–13).
 ///
@@ -9,7 +35,7 @@ import AinkradAppKit
 /// (`theme:`, no `report:`) on purpose: each later task flips one surface and
 /// its call site here in the same commit, so every task stays independently
 /// buildable.
-public struct QuestShell: View {
+struct QuestShellContent: View {
     @Bindable var store: ProjectStore
     let theme: HostTheme
     let documents: PluginDocumentStore
@@ -22,13 +48,9 @@ public struct QuestShell: View {
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
 
+    /// Resolves to the center that `.ainkradToastHost()` on `QuestShell`
+    /// injected, because this view is that modifier's content.
     @Environment(\.ainkradToastCenter) private var toasts
-
-    public init(store: ProjectStore, theme: HostTheme, documents: PluginDocumentStore) {
-        self.store = store
-        self.theme = theme
-        self.documents = documents
-    }
 
     private var hasProject: Bool { selectedProject != nil }
 
@@ -36,7 +58,7 @@ public struct QuestShell: View {
         selectedProject.flatMap { id in store.projects.first { $0.id == id }?.name }
     }
 
-    public var body: some View {
+    var body: some View {
         VStack(spacing: 0) {
             QuestHeader(trail: BreadcrumbTrail.items(projectName: projectName,
                                                      surface: surface, sheet: nil),
@@ -69,7 +91,6 @@ public struct QuestShell: View {
             }
         }
         .ainkradPanel()
-        .ainkradToastHost()
         // Selection and surface must stay reachable together: clearing the
         // project while on Board previously left the pane rendering nothing.
         .onChange(of: selectedProject) { _, _ in
@@ -185,7 +206,13 @@ public struct QuestShell: View {
         case "newProject": perform(.newProject)
         case "focusSearch": searchFocused = true
         case "newItem": perform(.newItem)
-        default: break
+        default:
+            // A binding added to `KeyBindings.all` with no handler here fires a
+            // real chord and does nothing, which is indistinguishable from a
+            // broken app. Trap it in debug and surface it at runtime rather
+            // than letting it be inert.
+            assertionFailure("KeyBindings.all has binding '\(id)' with no handler in QuestShellContent.activate")
+            report("That shortcut is not wired up yet.", status: .warning)
         }
     }
 }
