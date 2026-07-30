@@ -1,0 +1,191 @@
+import SwiftUI
+import AinkradAppKit
+
+/// Quest's root. Owns selection state, routes sheets, and owns the single
+/// `report` path that will replace the per-view `@State var error: String?`
+/// scattered across four surfaces as those surfaces migrate (Tasks 8–13).
+///
+/// The surfaces below are still called with their pre-migration initializers
+/// (`theme:`, no `report:`) on purpose: each later task flips one surface and
+/// its call site here in the same commit, so every task stays independently
+/// buildable.
+public struct QuestShell: View {
+    @Bindable var store: ProjectStore
+    let theme: HostTheme
+    let documents: PluginDocumentStore
+
+    @State private var surface: QuestSurface = .landing
+    @State private var selectedProject: UUID?
+    @State private var showingTrash = false
+    @State private var showingCommands = false
+    @State private var settingsProject: UUID?
+    @State private var searchText = ""
+    @FocusState private var searchFocused: Bool
+
+    @Environment(\.ainkradToastCenter) private var toasts
+
+    public init(store: ProjectStore, theme: HostTheme, documents: PluginDocumentStore) {
+        self.store = store
+        self.theme = theme
+        self.documents = documents
+    }
+
+    private var hasProject: Bool { selectedProject != nil }
+
+    private var projectName: String? {
+        selectedProject.flatMap { id in store.projects.first { $0.id == id }?.name }
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            QuestHeader(trail: BreadcrumbTrail.items(projectName: projectName,
+                                                     surface: surface, sheet: nil),
+                        surface: $surface,
+                        searchText: $searchText,
+                        searchFocused: $searchFocused,
+                        showsSwitcher: SurfaceVisibility.showsSwitcher(hasProject: hasProject),
+                        onNew: { newItemOrProject() },
+                        onSettings: { settingsProject = selectedProject },
+                        onTrash: { showingTrash = true })
+
+            // A failed persist is a standing condition, not an event, so it is
+            // a banner rather than a toast — a toast would expire while the
+            // write was still lost.
+            if let message = store.persistenceFailure {
+                AinkradBanner(message: message, status: .danger)
+                    .padding(.horizontal, AinkradSpacing.md)
+                    .padding(.top, AinkradSpacing.sm)
+            }
+
+            HStack(spacing: 0) {
+                ProjectSidebar(store: store, theme: theme, documents: documents,
+                               selection: $selectedProject, surface: $surface,
+                               showingTrash: $showingTrash,
+                               settingsProject: $settingsProject)
+                    .frame(width: 232)
+                Divider()
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .ainkradPanel()
+        .ainkradToastHost()
+        // Selection and surface must stay reachable together: clearing the
+        // project while on Board previously left the pane rendering nothing.
+        .onChange(of: selectedProject) { _, _ in
+            withAnimation(AinkradMotion.present) {
+                surface = SurfaceVisibility.resolved(surface: surface, hasProject: hasProject)
+            }
+        }
+        .ainkradModal(isPresented: $showingCommands) {
+            QuestCommandMenu(store: store, hasProject: hasProject,
+                             statuses: currentStatuses) { perform($0) }
+        }
+        // Trash and project settings keep their existing `.sheet` presentation
+        // until their own migration tasks move them to `.ainkradModal`.
+        .sheet(isPresented: $showingTrash) {
+            TrashView(store: store, theme: theme)
+        }
+        .sheet(item: Binding(
+            get: { settingsProject.flatMap { store.openProject($0)?.project } },
+            set: { settingsProject = $0?.id })) { project in
+            ProjectSettingsSheet(store: store, project: project, theme: theme)
+        }
+        .background(shortcuts)
+    }
+
+    @ViewBuilder private var content: some View {
+        // Animated by surface so switching materializes rather than jump-cuts.
+        ZStack {
+            switch surface {
+            case .today:
+                TodaySurface(store: store, theme: theme, onOpen: open)
+            case .overview, .list, .board, .timeline:
+                if let id = selectedProject, let document = store.openProject(id) {
+                    switch surface {
+                    case .overview: OverviewSurface(store: store, document: document,
+                                                    theme: theme)
+                    case .list: ListSurface(store: store, document: document, theme: theme)
+                    case .board: BoardSurface(store: store, document: document, theme: theme)
+                    case .timeline: TimelineSurface(document: document, theme: theme)
+                    case .today: EmptyView()
+                    }
+                } else {
+                    let reason = EmptyReason.classify(totalCount: 0, visibleCount: 0,
+                                                      hasProject: false)
+                    AinkradEmptyState(icon: reason.icon, title: reason.title,
+                                      message: reason.message)
+                }
+            }
+        }
+        .animation(AinkradMotion.present, value: surface)
+    }
+
+    private var currentStatuses: [Status] {
+        guard let id = selectedProject, let document = store.openProject(id) else { return [] }
+        return document.project.statusScheme.statuses
+    }
+
+    /// The single reporting path. Surfaces receive this instead of owning an
+    /// error string, one surface at a time from Task 8 onward.
+    func report(_ message: String, status: AinkradStatus = .danger) {
+        toasts.show(message, status: status)
+    }
+
+    private func open(_ item: WorkItem) {
+        selectedProject = item.projectID
+        surface = .list
+    }
+
+    private func newItemOrProject() {
+        // Item creation belongs to the owning surface; project creation still
+        // lives in the sidebar footer until Task 8 moves it into the shell.
+        if hasProject {
+            report("Use the item list to add an item.", status: .neutral)
+        } else {
+            report("Use the sidebar to create a project.", status: .neutral)
+        }
+    }
+
+    private func perform(_ action: CommandAction) {
+        showingCommands = false
+        switch action {
+        case .openSurface(let target): surface = target
+        case .selectProject(let id): selectedProject = id
+        case .openTrash: showingTrash = true
+        case .openSettings: settingsProject = selectedProject
+        case .newProject:
+            report("Use the sidebar to create a project.", status: .neutral)
+        case .newItem, .setStatus:
+            // Both need a focused item, which the shell does not track; the
+            // owning surface handles them. Reported rather than silently
+            // dropped so the gap is visible instead of feeling broken.
+            report("Open the item first, then use its editor.", status: .neutral)
+        }
+    }
+
+    /// Keyboard entry points driven BY the binding table, not duplicating it.
+    /// Hardcoding the chords here would leave `KeyBindings.duplicates` guarding
+    /// a table nothing reads, and let the chord shown on a button drift from
+    /// the chord that actually fires.
+    @ViewBuilder private var shortcuts: some View {
+        ForEach(KeyBindings.all, id: \.id) { binding in
+            Button("") { activate(binding.id) }
+                .keyboardShortcut(KeyEquivalent(binding.key),
+                                  modifiers: binding.modifiers.eventModifiers)
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+    }
+
+    private func activate(_ id: String) {
+        switch id {
+        case "commandMenu": showingCommands.toggle()
+        case "newProject": perform(.newProject)
+        case "focusSearch": searchFocused = true
+        case "newItem": perform(.newItem)
+        default: break
+        }
+    }
+}
