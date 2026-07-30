@@ -34,6 +34,7 @@ public final class QuestMCPOperations {
             case "deleteProject": try deleteProject(json)
             case "addLink": try addLink(json)
             case "removeLink": try removeLink(json)
+            case "updateStatusScheme": try updateStatusScheme(json)
             default: failure("Unknown operation \(operation)")
             }
         } catch let error as ArgumentError {
@@ -212,6 +213,47 @@ public final class QuestMCPOperations {
         let link = try link(from: json, operation: "remove_link")
         try store.removeLink(from: target, link: link, actor: .agent)
         return success("Removed \(link.scheme.rawValue) link \(link.label).")
+    }
+
+    /// Plans first, and mutates nothing when the plan is invalid — the
+    /// property that makes this tool safe to hand an assistant, since it can
+    /// retry a corrected submission without worrying it partially landed.
+    private func updateStatusScheme(_ json: [String: Any]) throws -> AgentActionResult {
+        let projectID = try uuid(json, "projectID", operation: "update_status_scheme")
+        let located = try locateProjectForMutation(projectID, operation: "update_status_scheme")
+
+        guard let rawStatuses = json["statuses"] as? [[String: Any]], !rawStatuses.isEmpty else {
+            throw ArgumentError(message:
+                "update_status_scheme: 'statuses' must be a non-empty array of "
+                + "{id, name, category, colorToken} objects, in board column order.")
+        }
+
+        var statuses: [Status] = []
+        for raw in rawStatuses {
+            guard let id = raw["id"] as? String, !id.isEmpty,
+                  let name = raw["name"] as? String,
+                  let rawCategory = raw["category"] as? String,
+                  let category = StatusCategory(rawValue: rawCategory) else {
+                throw ArgumentError(message:
+                    "update_status_scheme: each status needs id, name and category "
+                    + "(todo, active or done).")
+            }
+            statuses.append(Status(id: id, name: name, category: category,
+                                   colorToken: raw["colorToken"] as? String ?? "accentPrimary"))
+        }
+
+        let reassignments = json["reassignments"] as? [String: String] ?? [:]
+        let items = store.allItems(in: projectID)
+
+        switch SchemePlan.plan(current: located.document.project.statusScheme,
+                               proposed: StatusScheme(statuses: statuses),
+                               reassignments: reassignments, items: items) {
+        case .invalid(let message):
+            return failure("update_status_scheme: \(message)")
+        case .valid(let plan):
+            try store.applyScheme(plan, to: projectID, actor: .agent)
+            return success("Updated \(located.document.project.name)'s statuses: \(plan.summary).")
+        }
     }
 
     // MARK: helpers

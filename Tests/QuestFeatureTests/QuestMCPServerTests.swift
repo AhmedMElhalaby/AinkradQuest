@@ -12,7 +12,7 @@ struct QuestMCPServerTests {
             "list_projects", "get_project", "search_items", "get_item",
             "create_project", "update_project", "create_item", "update_item",
             "move_item", "set_status", "delete_item", "delete_project",
-            "add_link", "remove_link",
+            "add_link", "remove_link", "update_status_scheme",
         ]))
     }
 
@@ -40,6 +40,7 @@ struct QuestMCPServerTests {
             "delete_project": "deleteProject",
             "add_link": "addLink",
             "remove_link": "removeLink",
+            "update_status_scheme": "updateStatusScheme",
         ]
         for tool in QuestMCPServer.tools {
             #expect(tool.operation == expected[tool.name])
@@ -64,10 +65,17 @@ struct QuestMCPServerTests {
         }
     }
 
-    @Test("only the deletes are destructive — creates and updates are not")
+    @Test("only the deletes and the scheme rewrite are destructive — creates and updates are not")
     func destructiveClassification() {
         let destructive = QuestMCPServer.tools.filter(\.destructive).map(\.name)
-        #expect(Set(destructive) == Set(["delete_item", "delete_project"]))
+        #expect(Set(destructive) == Set(["delete_item", "delete_project", "update_status_scheme"]))
+    }
+
+    @Test("update_status_scheme is destructive")
+    func schemeToolIsDestructive() throws {
+        let tool = try #require(QuestMCPServer.tools.first { $0.name == "update_status_scheme" })
+        #expect(tool.destructive)
+        #expect(!tool.readOnly)
     }
 
     @Test("every tool carries a schema that parses as a JSON object")

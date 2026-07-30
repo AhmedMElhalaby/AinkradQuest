@@ -28,17 +28,16 @@ import AinkradAppKit
 ///   same reason creates and updates are not. Attaching or detaching a
 ///   reference is cheap, visible in the activity feed, and — unlike a delete —
 ///   trivially reversible by calling the other tool with the same arguments.
+/// - `update_status_scheme` is **`destructive: true`**. Unlike every other
+///   mutation, this one rewrites many existing items in a single call —
+///   reassigning statuses and stamping or clearing `closedAt` — and the agent
+///   has no way to judge what a workflow column meant to the people using it.
+///   A rename is cheap to get wrong; silently moving a hundred items off a
+///   column the agent decided to drop is not.
 ///
 /// `requiresLiveApp` is false on all of them: the store is loaded from
 /// `host.documents` and works with no Quest window open, which is what lets the
 /// assistant file a task while you are in a terminal.
-///
-/// ## `update_status_scheme` discrepancy
-///
-/// The plan's MCP design also lists `update_status_scheme` as a destructive
-/// tool, but `QuestMCPOperations` has no operation for it — there is nothing
-/// to route to. It is deliberately NOT included here rather than invented;
-/// resolving that gap is out of scope for this task.
 @MainActor
 public enum QuestMCPServer {
     public struct Tool {
@@ -201,6 +200,22 @@ public enum QuestMCPServer {
                 ("identifier", "string", "The link's identifier."),
                 ("repo", "string", "The link's repo, for branch/pr/commit links."),
              ], required: ["scheme", "identifier"])),
+
+        Tool("update_status_scheme", "updateStatusScheme",
+             "Replace a project's status scheme. Send the COMPLETE ordered list of statuses "
+             + "— board columns appear in this order — each with id, name, category (todo, "
+             + "active or done) and colorToken. Ids are permanent: keep an existing status's "
+             + "id to rename it, and use a new id only for a genuinely new status. A scheme "
+             + "must contain at least one 'done' status. If you drop a status that still "
+             + "holds items, name where they go in 'reassignments' ({removedStatusID: "
+             + "destinationStatusID}), or the call is refused and nothing changes.",
+             destructive: true,
+             schemaJSON: schema([
+                ("projectID", "string", "The project's UUID."),
+                ("statuses", "array", "The complete ordered status list."),
+                ("reassignments", "object", "removedStatusID → destinationStatusID, for "
+                 + "removed statuses that still hold items."),
+             ], required: ["projectID", "statuses"])),
     ]
 
     /// Internal rather than private so tests can drive routing without a host.

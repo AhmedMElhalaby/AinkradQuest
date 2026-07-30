@@ -378,4 +378,90 @@ struct QuestMCPOperationsTests {
         #expect(result.isError)
         #expect(store.openProject(project.id)?.project.links.count == 1)
     }
+
+    @Test("update_status_scheme replaces the scheme and reassigns items")
+    func updateScheme() async throws {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+        let epic = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                        title: "E", statusID: "in_review", actor: .user)
+
+        let result = await operations.run(
+            operation: "updateStatusScheme",
+            arguments: #"""
+            {"projectID":"\#(project.id.uuidString)",
+             "statuses":[{"id":"todo","name":"Todo","category":"todo","colorToken":"accentPrimary"},
+                         {"id":"done","name":"Done","category":"done","colorToken":"success"}],
+             "reassignments":{"in_review":"todo","backlog":"todo","in_progress":"todo"}}
+            """#)
+
+        #expect(!result.isError)
+        #expect(store.items(in: project.id).first { $0.id == epic.id }?.statusID == "todo")
+        #expect(result.text.contains("todo") || result.text.contains("Todo"))
+    }
+
+    @Test("an invalid scheme is refused and changes nothing")
+    func invalidSchemeChangesNothing() async {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+
+        let result = await operations.run(
+            operation: "updateStatusScheme",
+            arguments: #"""
+            {"projectID":"\#(project.id.uuidString)",
+             "statuses":[{"id":"todo","name":"Todo","category":"todo","colorToken":"accentPrimary"}]}
+            """#)
+
+        #expect(result.isError)
+        #expect(result.text.lowercased().contains("done"))
+        #expect(store.openProject(project.id)?.project.statusScheme == .softwareDefault)
+    }
+
+    @Test("a removal with items but no destination is refused")
+    func refusesUnmappedRemoval() async throws {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+        _ = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                 title: "E", statusID: "in_review", actor: .user)
+
+        let result = await operations.run(
+            operation: "updateStatusScheme",
+            arguments: #"""
+            {"projectID":"\#(project.id.uuidString)",
+             "statuses":[{"id":"todo","name":"Todo","category":"todo","colorToken":"accentPrimary"},
+                         {"id":"done","name":"Done","category":"done","colorToken":"success"}]}
+            """#)
+
+        #expect(result.isError)
+        #expect(store.openProject(project.id)?.project.statusScheme == .softwareDefault)
+    }
+
+    @Test("a trashed project is refused for update_status_scheme")
+    func schemeRefusesTrashedProject() async throws {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+        try store.deleteProject(project.id, actor: .user)
+
+        let result = await operations.run(
+            operation: "updateStatusScheme",
+            arguments: #"""
+            {"projectID":"\#(project.id.uuidString)",
+             "statuses":[{"id":"done","name":"Done","category":"done","colorToken":"success"}]}
+            """#)
+
+        #expect(result.isError)
+        #expect(result.text.lowercased().contains("trash"))
+    }
+
+    @Test("malformed status entries are an argument error, not a crash")
+    func malformedStatuses() async {
+        let (operations, store) = makeSubject()
+        let project = store.createProject(name: "P", kind: .software, actor: .user)
+
+        let result = await operations.run(
+            operation: "updateStatusScheme",
+            arguments: #"{"projectID":"\#(project.id.uuidString)","statuses":"not an array"}"#)
+
+        #expect(result.isError)
+    }
 }

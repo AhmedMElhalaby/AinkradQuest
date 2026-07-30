@@ -15,9 +15,13 @@ markdown about it.
   columns are project-specific, not global. `kind: "software"` gets
   Backlog/Todo/In Progress/In Review/Done; `kind: "general"` gets the same without
   In Review. Completion follows a status's `done` category, not its name or label text.
-  The scheme is chosen from the project's `kind` at creation and is not editable in
-  v0.1.0 — there is no scheme editor, no store mutator and no MCP tool for it, so
-  "per-project" means "each project carries its own scheme", not "define your own columns".
+  The scheme starts from the project's `kind` at creation and is editable per project
+  afterwards, from the project settings sheet or the `update_status_scheme` MCP tool.
+  Status ids are permanent — renaming a status keeps its id, and only a genuinely new
+  status gets a new one — and a scheme must always keep at least one `done`-category
+  status, since nothing could ever finish otherwise. Removing a status that still holds
+  items requires naming where those items go; the edit is refused, and nothing changes,
+  until a destination is given.
 - **Links.** Projects and items carry a typed `Link` list — `file`, `folder`, `url`,
   `repo`, `branch`, `pr`, `commit` (unknown schemes decode to `.unknown` rather than being
   dropped, so a link written by a future version still displays). Repo-scoped links
@@ -44,10 +48,8 @@ project, since only epics may sit at the top level.
 
 ## MCP tools
 
-Quest publishes fourteen tools over MCP (`QuestMCPServer.swift`), following the same
-declarative-table shape as Ainkrad's other plugin MCP servers. `update_status_scheme`
-does **not** exist — an earlier design mentioned it, but `QuestMCPOperations` has no
-operation to route it to, so it was deliberately left out rather than invented.
+Quest publishes fifteen tools over MCP (`QuestMCPServer.swift`), following the same
+declarative-table shape as Ainkrad's other plugin MCP servers.
 
 | Tool | destructive | readOnly | Why |
 |---|---|---|---|
@@ -65,6 +67,7 @@ operation to route it to, so it was deliberately left out rather than invented.
 | `delete_project` | ✓ | | Same reasoning at project scope: removes a project and all of its work from every surface. |
 | `add_link` | | | Mutating but not destructive: attaching a reference adds information, is logged in the activity feed, and is undone by one `remove_link` with the same arguments. |
 | `remove_link` | | | Mutating but not destructive: it detaches a reference and erases no work, and is undone by one `add_link` with the same arguments. |
+| `update_status_scheme` | ✓ | | Unlike every other mutation, this rewrites many existing items at once — reassigning statuses and stamping or clearing `closedAt` — and the agent can't judge what a workflow column was for. Plans the change first and applies nothing if the plan is invalid. |
 
 `destructive` is what the host's Full-auto guard gates on; `requiresLiveApp` is false on
 every tool, since the store loads from `host.documents` and works whether or not a Quest
