@@ -3,16 +3,38 @@ import AppKit
 
 public enum LinkOpenError: Error, Equatable {
     case missingTarget(path: String)
+    /// The target exists but is not a plain folder — a file, or a bundle such as
+    /// a `.app`, which the system opener would LAUNCH rather than show.
+    case notAFolder(path: String)
+    /// A URL reached `openWeb` that is not http(s).
+    case notAWebAddress(url: String)
 
     public var message: String {
         switch self {
         case .missingTarget(let path): "Nothing exists at \(path) any more."
+        case .notAFolder(let path): "\(path) is not a folder, so Quest will not open it."
+        case .notAWebAddress(let url): "\(url) is not a web address (http or https)."
         }
     }
 }
 
 /// The side-effecting edge of link opening, behind a protocol so the click path
 /// is testable without opening a real Finder window.
+/// ## Requirements on conformances
+///
+/// Swift cannot express these in the type system — a protocol declares
+/// signatures, not preconditions — so they are stated here and every
+/// conformance must honour them; `LinkOpening.open` relies on them:
+///
+/// - `reveal` MUST verify its target exists and throw `LinkOpenError` rather
+///   than silently doing nothing. A link outlives the thing it points at.
+/// - `openFolder` MUST verify its target exists AND is a plain directory, and
+///   MUST refuse a bundle (`.app` and friends). The system opener LAUNCHES an
+///   app bundle and opens a document in its owning app, so an unchecked
+///   `openFolder` turns an agent-written identifier into a one-click launch.
+/// - `openWeb` MUST re-check that the URL is http(s) and throw otherwise.
+///   `LinkResolution` already decides this; repeating it here is deliberate
+///   defense in depth — that is a pure decision, this is the irreversible act.
 @MainActor public protocol LinkOpener {
     func reveal(_ url: URL) throws
     func openFolder(_ url: URL) throws
@@ -37,15 +59,52 @@ public enum LinkOpenError: Error, Equatable {
     }
 
     public func openFolder(_ url: URL) throws {
-        try requireExists(url)
+        try Self.validateFolder(url)
         NSWorkspace.shared.open(url)
     }
 
     public func openWeb(_ url: URL) throws {
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+            throw LinkOpenError.notAWebAddress(url: url.absoluteString)
+        }
         NSWorkspace.shared.open(url)
     }
 
-    /// A link outlives the thing it points at: folders get moved, volumes get
+    /// Extensions the system treats as launchable/openable packages rather than
+    /// plain folders. All of these ARE directories on disk, so an `isDirectory`
+    /// check alone is not enough.
+    private static let bundleExtensions: Set<String> = [
+        "app", "bundle", "framework", "plugin", "kext", "appex", "xpc",
+        "prefpane", "qlgenerator", "saver", "service", "workflow", "pkg",
+        "mpkg", "dmg", "xcodeproj", "xcworkspace", "playground", "rtfd",
+        "scptd", "download", "photoslibrary", "musiclibrary", "tvlibrary",
+        "logicx", "band", "sparsebundle"
+    ]
+
+    /// Separated from `openFolder` so the whole refusal decision is testable
+    /// without `NSWorkspace` opening a real Finder window.
+    ///
+    /// `URL(fileURLWithPath:)` does not normalize `..` and `NSWorkspace` follows
+    /// symlinks, so `/tmp/../Applications/Calculator.app` reaches the real
+    /// bundle. Validation therefore runs on the fully resolved path while the
+    /// error names the path the user actually wrote.
+    static func validateFolder(_ url: URL) throws {
+        let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: resolved.path,
+                                             isDirectory: &isDirectory) else {
+            throw LinkOpenError.missingTarget(path: url.path)
+        }
+        guard isDirectory.boolValue else { throw LinkOpenError.notAFolder(path: url.path) }
+        // Refuse, do not quietly reveal instead: the user asked to open a
+        // folder, and substituting a different action would hide that the link
+        // does not point at one.
+        guard !bundleExtensions.contains(resolved.pathExtension.lowercased()) else {
+            throw LinkOpenError.notAFolder(path: url.path)
+        }
+    }
+
+    /// A link outlives the thing it points at: files get moved, volumes get
     /// unmounted. Checking first turns a silent no-op into a message.
     private func requireExists(_ url: URL) throws {
         guard FileManager.default.fileExists(atPath: url.path) else {

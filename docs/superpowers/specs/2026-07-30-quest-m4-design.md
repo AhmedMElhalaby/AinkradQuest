@@ -69,7 +69,17 @@ Per scheme:
 - `.url` → `.web`, **only** for a valid `http`/`https` URL. `LinkEditor` lets a user type
   anything into the identifier field, so a `.url` link can hold arbitrary text; handing that
   to the system opener is how an unexpected app launches. Anything else is `.inert`.
-- `.folder` → `.openFolder`, only for an absolute path.
+  **Accepted by design:** loopback, LAN and userinfo forms — `http://localhost:8080/...`,
+  `http://127.0.0.1`, internal hostnames, and `https://example.com@evil.com` (real host
+  `evil.com`) — are all valid http(s) and therefore resolve to `.web`, so an agent-planted
+  link can point the browser at a loopback or LAN endpoint under an innocent label. This is
+  a known, accepted property: these are genuine web addresses and refusing them would break
+  legitimate local-dev and intranet links. Mitigation is observability, not refusal — the
+  row's open button carries `.help(link.identifier)` so hovering shows the real target
+  before the click.
+- `.folder` → `.openFolder`, only for an absolute path. The opener additionally refuses a
+  target that is not a plain directory (regular file, or a bundle such as `.app`), since
+  `NSWorkspace.open` would launch it.
 - `.file` → `.reveal` (selected in Finder), only for an absolute path. **Reveal, not open**:
   in a tool whose links are references rather than documents, the usual intent is to find the
   thing, not launch whatever owns the extension. Lore sets the same precedent with

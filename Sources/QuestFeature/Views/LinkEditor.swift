@@ -113,6 +113,10 @@ struct LinkListView: View {
                                                : theme.tokens.foreground)
                     }
                     .buttonStyle(.plain)
+                    // Both label and identifier are agent-writable, and the row
+                    // only shows the label — so without this the destination of
+                    // a clickable row is unobservable before clicking.
+                    .help(link.identifier)
                     Spacer()
                     Button {
                         remove(link)
