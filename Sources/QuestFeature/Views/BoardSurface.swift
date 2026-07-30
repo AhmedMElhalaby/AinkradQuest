@@ -11,10 +11,6 @@ struct BoardSurface: View {
     /// worse than no control at all. The board grows no field of its own.
     @Binding var searchText: String
     let report: (String, AinkradStatus) -> Void
-    /// Forwarded only because `ItemEditor` is still on its pre-M5 initializer
-    /// (Task 12 migrates it), exactly as `OverviewSurface` forwards it for the
-    /// link views. Nothing in this file's own layout reads it.
-    let theme: HostTheme
 
     /// The base the header's query is merged onto. No board UI sets its other
     /// fields yet, but it is the merge base rather than dead state — see
@@ -65,13 +61,22 @@ struct BoardSurface: View {
             }
         }
         .animation(AinkradMotion.present, value: groupByEpic)
-        // Still a `.sheet`, not `.ainkradModal`: `ItemEditor` dismisses itself
-        // through `@Environment(\.dismiss)`, which only a real presentation
-        // provides. Task 12 migrates the editor and this presentation together.
-        .sheet(item: $editing) { item in
-            ItemEditor(store: store, document: document,
-                       item: document.items.first { $0.id == item.id } ?? item,
-                       theme: theme)
+        // `ItemEditor` no longer reaches for `@Environment(\.dismiss)` — an
+        // overlay-based `.ainkradModal` injects none — so this presenter owns
+        // closing it, via `onClose`. Keyed by `.id(item.id)` because the modal
+        // content view is REUSED across a change of `editing`: without the id,
+        // tapping a second row would keep the first item's `@State draft`.
+        .ainkradModal(isPresented: Binding(get: { editing != nil },
+                                           set: { if !$0 { editing = nil } })) {
+            if let item = editing {
+                ItemEditor(store: store, document: document,
+                           // Re-resolved so an edit made elsewhere since the row
+                           // was tapped is not overwritten by a stale snapshot.
+                           item: document.items.first { $0.id == item.id } ?? item,
+                           report: report,
+                           onClose: { editing = nil })
+                    .id(item.id)
+            }
         }
     }
 

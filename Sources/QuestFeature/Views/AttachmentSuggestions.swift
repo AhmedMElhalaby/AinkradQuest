@@ -211,17 +211,13 @@ struct AttachmentPicker: View {
 struct FolderAttachButton: View {
     @Bindable var store: ProjectStore
     let projectID: UUID
-    let theme: HostTheme
-
-    @State private var error: String?
+    /// The shell's reporting path, replacing this view's `error` string. No
+    /// `theme:` to thread: this view draws only a kit button, which reads
+    /// `\.ainkradTheme` from the environment itself.
+    let report: (String, AinkradStatus) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            AinkradButton(title: "Attach folder…", style: .secondary, action: attach)
-            if let error {
-                Text(error).font(.caption).foregroundStyle(theme.statusColors.danger)
-            }
-        }
+        AinkradButton(title: "Attach folder…", style: .secondary, action: attach)
     }
 
     private func attach() {
@@ -230,7 +226,10 @@ struct FolderAttachButton: View {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        error = FolderAttachment.attach(url: url, scheme: FolderMatch.linkKind(for: url),
-                                        to: projectID, store: store)
+        if let message = FolderAttachment.attach(url: url,
+                                                 scheme: FolderMatch.linkKind(for: url),
+                                                 to: projectID, store: store) {
+            report(message, .danger)
+        }
     }
 }

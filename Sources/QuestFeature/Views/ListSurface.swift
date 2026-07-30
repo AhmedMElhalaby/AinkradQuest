@@ -33,11 +33,6 @@ struct ListSurface: View {
     /// the header's is the one the ⌘F chord focuses.
     @Binding var searchText: String
     let report: (String, AinkradStatus) -> Void
-    /// Forwarded only because `ItemEditor` is still on its pre-M5 initializer
-    /// (Task 12 migrates it), exactly as `OverviewSurface` forwards it for the
-    /// link views. Nothing in this file's own layout reads it — kit components
-    /// resolve `\.ainkradTheme` from the environment.
-    let theme: HostTheme
 
     @State private var filter = ItemFilter()
     @State private var sort: ItemSort = .manual
@@ -74,15 +69,22 @@ struct ListSurface: View {
             }
         }
         .padding(AinkradSpacing.md)
-        // Still a `.sheet`, not `.ainkradModal`: `ItemEditor` dismisses itself
-        // through `@Environment(\.dismiss)`, which only a real presentation
-        // provides. Task 12 migrates the editor and this presentation together.
-        .sheet(item: $editing) { item in
-            ItemEditor(store: store, document: document,
-                       // Re-resolved so an edit made elsewhere since the row
-                       // was tapped is not overwritten by a stale snapshot.
-                       item: document.items.first { $0.id == item.id } ?? item,
-                       theme: theme)
+        // `ItemEditor` no longer reaches for `@Environment(\.dismiss)` — an
+        // overlay-based `.ainkradModal` injects none — so this presenter owns
+        // closing it, via `onClose`. Keyed by `.id(item.id)` because the modal
+        // content view is REUSED across a change of `editing`: without the id,
+        // tapping a second row would keep the first item's `@State draft`.
+        .ainkradModal(isPresented: Binding(get: { editing != nil },
+                                           set: { if !$0 { editing = nil } })) {
+            if let item = editing {
+                ItemEditor(store: store, document: document,
+                           // Re-resolved so an edit made elsewhere since the row
+                           // was tapped is not overwritten by a stale snapshot.
+                           item: document.items.first { $0.id == item.id } ?? item,
+                           report: report,
+                           onClose: { editing = nil })
+                    .id(item.id)
+            }
         }
     }
 

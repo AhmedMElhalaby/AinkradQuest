@@ -31,10 +31,9 @@ public struct QuestShell: View {
 /// `report` path that will replace the per-view `@State var error: String?`
 /// scattered across four surfaces as those surfaces migrate (Tasks 8–13).
 ///
-/// The surfaces below are still called with their pre-migration initializers
-/// (`theme:`, no `report:`) on purpose: each later task flips one surface and
-/// its call site here in the same commit, so every task stays independently
-/// buildable.
+/// After Task 12 the only `theme: HostTheme` left in this file is the one
+/// `TrashView` still needs (Task 13); every other view resolves colour from
+/// `\.ainkradTheme`/`\.ainkradStatusColors`, which the host injects.
 struct QuestShellContent: View {
     @Bindable var store: ProjectStore
     let theme: HostTheme
@@ -139,15 +138,25 @@ struct QuestShellContent: View {
             QuestCommandMenu(store: store, hasProject: hasProject,
                              statuses: currentStatuses) { perform($0) }
         }
-        // Trash and project settings keep their existing `.sheet` presentation
-        // until their own migration tasks move them to `.ainkradModal`.
+        // Trash keeps its existing `.sheet` presentation until Task 13 moves
+        // it; `theme` survives on this view only to feed it.
         .sheet(isPresented: $showingTrash) {
             TrashView(store: store, theme: theme)
         }
-        .sheet(item: Binding(
-            get: { settingsProject.flatMap { store.openProject($0)?.project } },
-            set: { settingsProject = $0?.id })) { project in
-            ProjectSettingsSheet(store: store, project: project, theme: theme)
+        // `ProjectSettingsSheet` no longer reads `@Environment(\.dismiss)` —
+        // `.ainkradModal` is an overlay and injects none — so the shell owns
+        // closing it. `.id(project.id)` because the modal's content view is
+        // reused across a change of `settingsProject`; without it, opening a
+        // second project's settings would keep the first project's `@State`
+        // draft.
+        .ainkradModal(isPresented: Binding(get: { settingsProject != nil },
+                                           set: { if !$0 { settingsProject = nil } })) {
+            if let id = settingsProject, let project = store.openProject(id)?.project {
+                ProjectSettingsSheet(store: store, project: project,
+                                     report: { report($0, status: $1) },
+                                     onClose: { settingsProject = nil })
+                    .id(project.id)
+            }
         }
         .background(shortcuts)
     }
@@ -162,13 +171,13 @@ struct QuestShellContent: View {
                 if let id = selectedProject, let document = store.openProject(id) {
                     switch surface {
                     case .overview: OverviewSurface(store: store, document: document,
-                                                    theme: theme)
+                                                    report: { report($0, status: $1) })
                     case .list: ListSurface(store: store, document: document,
                                             searchText: $searchText,
-                                            report: { report($0, status: $1) }, theme: theme)
+                                            report: { report($0, status: $1) })
                     case .board: BoardSurface(store: store, document: document,
                                               searchText: $searchText,
-                                              report: { report($0, status: $1) }, theme: theme)
+                                              report: { report($0, status: $1) })
                     case .timeline: TimelineSurface(document: document)
                     case .today: EmptyView()
                     }

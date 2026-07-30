@@ -4,13 +4,11 @@ import AinkradAppKit
 struct OverviewSurface: View {
     @Bindable var store: ProjectStore
     let document: ProjectDocument
-    /// Forwarded, unused by this view's own kit components (which read
-    /// `\.ainkradTheme` from the environment), but still required by
-    /// `LinkListView`/`LinkEditor`/`FolderAttachButton` — none of which are
-    /// in Task 10's scope — so their pre-migration `theme: HostTheme`
-    /// initializers keep working. See the task-10 report for the deviation
-    /// from the brief's `OverviewSurface(store:document:)` signature.
-    let theme: HostTheme
+    /// The shell's single reporting path, forwarded to the link views below.
+    /// The `theme: HostTheme` this surface used to carry is gone: every view it
+    /// forwarded it to now reads `\.ainkradTheme` from the environment
+    /// (Task 12).
+    let report: (String, AinkradStatus) -> Void
 
     @Environment(\.ainkradTheme) private var ainkradTheme
 
@@ -32,13 +30,14 @@ struct OverviewSurface: View {
                 AinkradSectionFrame(title: "Links") {
                     VStack(alignment: .leading, spacing: AinkradSpacing.sm) {
                         LinkListView(store: store, target: .project(document.project.id),
-                                    links: document.project.links, theme: theme)
-                        LinkEditor(store: store, target: .project(document.project.id), theme: theme)
+                                    links: document.project.links, report: report)
+                        LinkEditor(store: store, target: .project(document.project.id),
+                                   report: report)
                         // Always reachable, independent of any root grant and of
                         // whether a suggestion sheet ever fired for this project —
                         // see `FolderAttachButton`'s doc comment.
                         FolderAttachButton(store: store, projectID: document.project.id,
-                                           theme: theme)
+                                           report: report)
                     }
                 }
 

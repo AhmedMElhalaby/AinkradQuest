@@ -32,51 +32,69 @@ public enum LinkValidation {
     }
 }
 
+/// The kinds a user may pick, in offer order. Named rather than `allCases` so
+/// `.unknown` — a value only a malformed document can produce — is never
+/// offered as something to create.
+private let offeredSchemes: [LinkScheme] = [.repo, .folder, .file, .url, .branch, .pr, .commit]
+
+/// Which schemes require a repo. Mirrors `LinkValidation`'s own set; kept here
+/// only to decide whether to SHOW the field, never to decide validity.
+private let repoScopedSchemes: Set<LinkScheme> = [.branch, .pr, .commit]
+
 struct LinkEditor: View {
     @Bindable var store: ProjectStore
     /// What this editor attaches to — a project or one work item.
     let target: LinkTarget
-    let theme: HostTheme
+    /// The shell's single reporting path. This view owns NO error string: the
+    /// old `@State var error` had to be cleared on every success so a stale
+    /// failure could not outlive the input that caused it. A toast expires on
+    /// its own, so the clear-on-success rule is preserved by construction —
+    /// which is why the success branches below deliberately report nothing.
+    let report: (String, AinkradStatus) -> Void
 
     @State private var scheme: LinkScheme = .repo
     @State private var identifier = ""
     @State private var label = ""
     @State private var repo = ""
-    @State private var error: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Picker("Kind", selection: $scheme) {
-                ForEach([LinkScheme.repo, .folder, .file, .url, .branch, .pr, .commit],
-                        id: \.self) { Text($0.rawValue).tag($0) }
+        VStack(alignment: .leading, spacing: AinkradSpacing.sm) {
+            AinkradFormRow(title: "Kind") {
+                AinkradSelect(items: offeredSchemes, selection: $scheme) { $0.rawValue }
             }
-            TextField("Identifier (path, URL, branch name…)", text: $identifier)
-            TextField("Label", text: $label)
-            if [.branch, .pr, .commit].contains(scheme) {
-                TextField("Repo", text: $repo)
+            AinkradFormRow(title: "Identifier") {
+                AinkradTextField(text: $identifier, placeholder: "Path, URL, branch name…")
             }
-            if let error {
-                Text(error).font(.caption).foregroundStyle(theme.statusColors.danger)
+            AinkradFormRow(title: "Label") {
+                AinkradTextField(text: $label, placeholder: "Label")
             }
-            Button("Add link", action: add)
+            // A LATER sibling of the Kind row, never a wrapper around it: the
+            // select that drives `scheme` must keep its structural identity
+            // across this branch swap, or choosing `.branch` would unmount the
+            // select in the very update its floating panel is closing.
+            if repoScopedSchemes.contains(scheme) {
+                AinkradFormRow(title: "Repo") {
+                    AinkradTextField(text: $repo, placeholder: "Repo")
+                }
+            }
+            AinkradButton(title: "Add link", style: .secondary, action: add)
         }
-        .textFieldStyle(.roundedBorder)
-        .padding(12)
+        .onSubmit(add)
     }
 
     private func add() {
         switch LinkValidation.normalize(scheme: scheme, identifier: identifier,
                                         label: label, repo: repo) {
         case .invalid(let message):
-            error = message
+            report(message, .danger)
         case .valid(let link):
             do {
                 try store.addLink(to: target, link: link, actor: .user)
-                identifier = ""; label = ""; repo = ""; error = nil
+                identifier = ""; label = ""; repo = ""
             } catch let failure as QuestError {
-                error = failure.message
+                report(failure.message, .danger)
             } catch {
-                self.error = error.localizedDescription
+                report(error.localizedDescription, .danger)
             }
         }
     }
@@ -88,49 +106,48 @@ struct LinkListView: View {
     @Bindable var store: ProjectStore
     let target: LinkTarget
     let links: [Link]
-    let theme: HostTheme
+    /// Same contract as `LinkEditor.report` — no per-view error string.
+    let report: (String, AinkradStatus) -> Void
     var opener: any LinkOpener = WorkspaceLinkOpener()
 
-    @State private var error: String?
+    @Environment(\.ainkradTheme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: AinkradSpacing.xs) {
             ForEach(links) { link in
                 let inert = isInert(link)
-                HStack {
+                HStack(spacing: AinkradSpacing.xs) {
                     Button {
                         open(link)
                     } label: {
-                        HStack {
-                            Image(systemName: LinkSymbol.name(for: link.scheme))
+                        HStack(spacing: AinkradSpacing.xs) {
+                            AinkradIconGlyph(systemName: LinkSymbol.name(for: link.scheme))
                             Text(link.label)
                             if let repo = link.repo {
                                 Text(repo).font(.caption)
-                                    .foregroundStyle(theme.tokens.foreground.opacity(0.6))
+                                    .foregroundStyle(theme.foreground.opacity(0.6))
                             }
                         }
-                        .foregroundStyle(inert ? theme.tokens.foreground.opacity(0.5)
-                                               : theme.tokens.foreground)
+                        .foregroundStyle(inert ? theme.foreground.opacity(0.5)
+                                               : theme.foreground)
                     }
                     .buttonStyle(.plain)
                     // Both label and identifier are agent-writable, and the row
                     // only shows the label — so without this the destination of
                     // a clickable row is unobservable before clicking.
                     .help(link.identifier)
+                    // `.help` is mouse-only, and the identifier is the sole
+                    // mitigation cited for accepting loopback and userinfo
+                    // URLs — so VoiceOver must announce it too, not just a
+                    // pointer hover.
+                    .accessibilityLabel("\(link.scheme.rawValue) link: \(link.identifier)")
                     Spacer()
-                    Button {
-                        remove(link)
-                    } label: {
-                        Image(systemName: "minus.circle")
-                    }
-                    .buttonStyle(.plain)
+                    AinkradIconButton(systemName: "minus.circle", size: 14,
+                                      tooltip: "Remove link") { remove(link) }
                 }
             }
-            if let error {
-                Text(error).font(.caption).foregroundStyle(theme.statusColors.danger)
-            }
         }
-        .foregroundStyle(theme.tokens.foreground)
+        .foregroundStyle(theme.foreground)
     }
 
     private func isInert(_ link: Link) -> Bool {
@@ -141,16 +158,15 @@ struct LinkListView: View {
     private func open(_ link: Link) {
         do {
             // A nil reason means it was actioned; a reason means there was
-            // nothing to do, and the user should be told which.
+            // nothing to do, and the user should be told which. Success stays
+            // silent, exactly as the cleared error string used to be.
             if let reason = try LinkOpening.open(link, using: opener) {
-                error = reason
-            } else {
-                error = nil
+                report(reason, .warning)
             }
         } catch let failure as LinkOpenError {
-            error = failure.message
+            report(failure.message, .danger)
         } catch {
-            self.error = error.localizedDescription
+            report(error.localizedDescription, .danger)
         }
     }
 
@@ -161,11 +177,10 @@ struct LinkListView: View {
             // makes every removal path — here, `remove_link` over MCP, project
             // delete — leak-free by construction rather than by remembering.
             try store.removeLink(from: target, link: link, actor: .user)
-            error = nil
         } catch let failure as QuestError {
-            error = failure.message
+            report(failure.message, .danger)
         } catch {
-            self.error = error.localizedDescription
+            report(error.localizedDescription, .danger)
         }
     }
 }
