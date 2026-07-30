@@ -4,6 +4,7 @@ import AinkradAppKit
 struct OverviewSurface: View {
     @Bindable var store: ProjectStore
     let document: ProjectDocument
+    let documents: PluginDocumentStore
     let theme: HostTheme
 
     var body: some View {
@@ -18,6 +19,11 @@ struct OverviewSurface: View {
                     LinkListView(store: store, target: .project(document.project.id),
                                 links: document.project.links, theme: theme)
                     LinkEditor(store: store, target: .project(document.project.id), theme: theme)
+                    // Always reachable, independent of any root grant and of
+                    // whether a suggestion sheet ever fired for this project —
+                    // see `FolderAttachButton`'s doc comment.
+                    FolderAttachButton(store: store, projectID: document.project.id,
+                                       documents: documents, theme: theme)
                 }
 
                 group("Epics") {

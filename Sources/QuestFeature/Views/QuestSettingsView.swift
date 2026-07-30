@@ -11,8 +11,8 @@ import AinkradAppKit
 /// Also hosts the two root grants (`FolderBookmark.projectsRootKey` /
 /// `vaultRootKey`) that drive automatic attachment suggestions at project
 /// creation time — and ONLY that. Granting a root does not attach anything by
-/// itself; the per-folder picker on project creation remains the way to
-/// attach a folder outside any granted root.
+/// itself; a project's Overview always has its own "Attach folder…" button
+/// (`FolderAttachButton`), independent of these grants.
 struct QuestSettingsView: View {
     let presentation: any PluginPresentationControl
     let documents: PluginDocumentStore
@@ -53,7 +53,7 @@ struct QuestSettingsView: View {
 
             AinkradCard {
                 VStack(alignment: .leading, spacing: AinkradSpacing.md) {
-                    Text("These folders are used only to suggest attachments when a project is created — nothing is read or written otherwise, and you can always attach a folder from outside them.")
+                    Text("These folders are used only to suggest attachments when a project is created — nothing is read or written otherwise. Every project's Overview also has its own Attach folder… button, which works whether or not you set anything here.")
                         .font(AinkradFontResolver.font(.body, typography: typo))
                         .foregroundStyle(theme.foreground)
 

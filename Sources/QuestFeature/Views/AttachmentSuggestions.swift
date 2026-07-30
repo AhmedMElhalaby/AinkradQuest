@@ -15,8 +15,9 @@ struct AttachmentSuggestion: Identifiable, Equatable {
 
 enum AttachmentSuggestions {
     /// Suggestions for a newly created project. Empty when no root is granted —
-    /// that is the normal state, not an error, and the per-folder picker remains
-    /// available regardless.
+    /// that is the normal state, not an error. The per-folder picker
+    /// (`FolderAttachButton`, on Overview) does not depend on this and is
+    /// reachable regardless of whether any suggestion ever fired.
     static func build(projectName: String, projectsRoot: URL?,
                       vaultRoot: URL?) -> [AttachmentSuggestion] {
         var found: [AttachmentSuggestion] = []
@@ -32,11 +33,42 @@ enum AttachmentSuggestions {
     }
 }
 
+/// The one place a folder actually becomes a `Link`, shared by the
+/// suggestion sheet and the persistent Overview picker so the two cannot
+/// drift on validation or bookmarking. Builds the link through
+/// `LinkValidation.normalize` — never hand-constructed — and saves a
+/// per-attachment bookmark under `FolderBookmark.attachmentKey` so the
+/// folder stays reachable later. Returns a failure message, or `nil` on
+/// success; never `try?`.
+@MainActor
+enum FolderAttachment {
+    static func attach(url: URL, scheme: LinkScheme, to projectID: UUID,
+                       store: ProjectStore, documents: PluginDocumentStore) -> String? {
+        switch LinkValidation.normalize(scheme: scheme, identifier: url.path,
+                                        label: url.lastPathComponent, repo: nil) {
+        case .invalid(let message):
+            return message
+        case .valid(let link):
+            do {
+                try store.addLink(to: .project(projectID), link: link, actor: .user)
+                try FolderBookmark.save(url, forKey: FolderBookmark.attachmentKey(UUID()),
+                                        in: documents)
+                return nil
+            } catch let failure as QuestError {
+                return failure.message
+            } catch {
+                return error.localizedDescription
+            }
+        }
+    }
+}
+
 /// Shown after a project is created when `AttachmentSuggestions.build`
 /// returned at least one candidate. Every suggestion starts unchecked — the
-/// user opts in, never the other way round. "Attach another folder…" is the
-/// escape hatch for anything outside a granted root, and works with no root
-/// granted at all: it goes straight to `NSOpenPanel`.
+/// user opts in, never the other way round. "Attach another folder…" here is
+/// a convenience alongside the suggestions, not the only way to reach the
+/// picker — `FolderAttachButton` on Overview is the one that is always
+/// reachable, independent of whether this sheet ever appears.
 struct AttachmentPicker: View {
     @Bindable var store: ProjectStore
     let projectID: UUID
@@ -87,50 +119,72 @@ struct AttachmentPicker: View {
             })
     }
 
+    /// Attempts every checked suggestion rather than stopping at the first
+    /// failure — a checkbox the user ticked should not silently go
+    /// unprocessed because an earlier one in the list failed. Failures are
+    /// collected and reported together; the sheet only closes once nothing
+    /// failed.
     private func attachChecked() {
-        for suggestion in suggestions where checked.contains(suggestion.id) {
-            guard attach(url: suggestion.url, scheme: suggestion.scheme) else { return }
+        let toAttach = suggestions.filter { checked.contains($0.id) }
+        var failures: [String] = []
+        for suggestion in toAttach {
+            if let message = FolderAttachment.attach(url: suggestion.url, scheme: suggestion.scheme,
+                                                      to: projectID, store: store, documents: documents) {
+                failures.append("\(suggestion.label): \(message)")
+            }
         }
-        onDone()
+        if failures.isEmpty {
+            error = nil
+            onDone()
+        } else {
+            error = failures.joined(separator: "; ")
+        }
     }
 
-    /// Opens an `NSOpenPanel` regardless of any granted root — the per-folder
-    /// picker is the escape hatch for anything outside one, so it must not
-    /// depend on a root being set.
+    /// Opens an `NSOpenPanel` regardless of any granted root — this is a
+    /// convenience alongside the suggestions, and (like `FolderAttachButton`)
+    /// must not depend on a root being set.
     private func attachAnother() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        _ = attach(url: url, scheme: FolderMatch.linkKind(for: url))
+        error = FolderAttachment.attach(url: url, scheme: FolderMatch.linkKind(for: url),
+                                        to: projectID, store: store, documents: documents)
     }
+}
 
-    /// Builds the link through `LinkValidation.normalize` so an attachment
-    /// never bypasses the same rules a manual link add would go through, then
-    /// saves a per-attachment bookmark so the folder stays reachable later.
-    @discardableResult
-    private func attach(url: URL, scheme: LinkScheme) -> Bool {
-        let outcome = LinkValidation.normalize(scheme: scheme, identifier: url.path,
-                                               label: url.lastPathComponent, repo: nil)
-        switch outcome {
-        case .invalid(let message):
-            error = message
-            return false
-        case .valid(let link):
-            do {
-                try store.addLink(to: .project(projectID), link: link, actor: .user)
-                try FolderBookmark.save(url, forKey: FolderBookmark.attachmentKey(UUID()),
-                                        in: documents)
-                error = nil
-                return true
-            } catch let failure as QuestError {
-                error = failure.message
-                return false
-            } catch {
-                self.error = error.localizedDescription
-                return false
+/// The escape hatch for attaching a folder to an EXISTING project,
+/// independent of any root grant and independent of whether
+/// `AttachmentSuggestions.build` ever found anything for this project. Lives
+/// on Overview beside the links list (`LinkListView`/`LinkEditor`) so
+/// attaching a folder is always reachable, not gated behind a suggestion
+/// sheet that may never appear.
+struct FolderAttachButton: View {
+    @Bindable var store: ProjectStore
+    let projectID: UUID
+    let documents: PluginDocumentStore
+    let theme: HostTheme
+
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            AinkradButton(title: "Attach folder…", style: .secondary, action: attach)
+            if let error {
+                Text(error).font(.caption).foregroundStyle(theme.statusColors.danger)
             }
         }
+    }
+
+    private func attach() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        error = FolderAttachment.attach(url: url, scheme: FolderMatch.linkKind(for: url),
+                                        to: projectID, store: store, documents: documents)
     }
 }
