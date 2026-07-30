@@ -27,9 +27,18 @@ public enum ProjectStateFilter: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// Wraps a freshly created project's attachment suggestions for `.sheet(item:)`,
+/// which needs `Identifiable` rather than a bare tuple.
+private struct SuggestionSheetState: Identifiable {
+    let projectID: UUID
+    let suggestions: [AttachmentSuggestion]
+    var id: UUID { projectID }
+}
+
 struct ProjectSidebar: View {
     @Bindable var store: ProjectStore
     let theme: HostTheme
+    let documents: PluginDocumentStore
     @Binding var selection: UUID?
     @Binding var surface: QuestSurface
     @Binding var showingTrash: Bool
@@ -38,6 +47,11 @@ struct ProjectSidebar: View {
     @State private var newProjectName = ""
     @State private var filter: ProjectStateFilter = .active
     @State private var error: String?
+    /// Set right after `create()` when suggestions were found for the new
+    /// project; presented as a sheet. Creation itself never waits on this —
+    /// when `AttachmentSuggestions.build` returns nothing (the normal case
+    /// with no roots granted) nothing changes here at all.
+    @State private var suggestionState: SuggestionSheetState?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -130,6 +144,11 @@ struct ProjectSidebar: View {
         }
         .padding(10)
         .background(theme.tokens.surface)
+        .sheet(item: $suggestionState) { state in
+            AttachmentPicker(store: store, projectID: state.projectID,
+                             suggestions: state.suggestions, documents: documents,
+                             theme: theme) { suggestionState = nil }
+        }
     }
 
     private func create() {
@@ -140,6 +159,18 @@ struct ProjectSidebar: View {
         error = nil
         selection = project.id
         surface = .overview
+
+        // Suggestions never block creation: they are resolved AFTER the
+        // project already exists and selection has already moved. With no
+        // root granted — the normal case — `build` returns empty and nothing
+        // further happens.
+        let projectsRoot = FolderBookmark.resolve(forKey: FolderBookmark.projectsRootKey, in: documents)
+        let vaultRoot = FolderBookmark.resolve(forKey: FolderBookmark.vaultRootKey, in: documents)
+        let suggestions = AttachmentSuggestions.build(projectName: name, projectsRoot: projectsRoot,
+                                                      vaultRoot: vaultRoot)
+        if !suggestions.isEmpty {
+            suggestionState = SuggestionSheetState(projectID: project.id, suggestions: suggestions)
+        }
     }
 
     private func setState(_ id: UUID, _ state: ProjectState) {

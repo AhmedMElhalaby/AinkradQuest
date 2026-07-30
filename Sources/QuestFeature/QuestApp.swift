@@ -37,11 +37,11 @@ public struct QuestApp: AinkradApp {
     }
 
     public static func makeRootView(host: HostServices) -> AnyView {
-        AnyView(QuestRootView(store: store(for: host), theme: host.theme))
+        AnyView(QuestRootView(store: store(for: host), theme: host.theme, documents: host.documents))
     }
 
     public static func makeSettingsView(host: HostServices) -> AnyView {
-        AnyView(QuestSettingsView(presentation: host.presentation))
+        AnyView(QuestSettingsView(presentation: host.presentation, documents: host.documents))
     }
 
     public static func chromeFill(host: HostServices) -> Color? {

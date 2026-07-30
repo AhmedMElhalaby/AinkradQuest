@@ -34,20 +34,22 @@ public enum QuestSurface: String, CaseIterable, Identifiable, Sendable {
 public struct QuestRootView: View {
     @Bindable var store: ProjectStore
     let theme: HostTheme
+    let documents: PluginDocumentStore
 
     @State private var surface: QuestSurface = .landing
     @State private var selectedProject: UUID?
     @State private var showingTrash = false
     @State private var settingsProject: UUID?
 
-    public init(store: ProjectStore, theme: HostTheme) {
+    public init(store: ProjectStore, theme: HostTheme, documents: PluginDocumentStore) {
         self.store = store
         self.theme = theme
+        self.documents = documents
     }
 
     public var body: some View {
         HStack(spacing: 0) {
-            ProjectSidebar(store: store, theme: theme,
+            ProjectSidebar(store: store, theme: theme, documents: documents,
                            selection: $selectedProject, surface: $surface,
                            showingTrash: $showingTrash, settingsProject: $settingsProject)
                 .frame(width: 220)
