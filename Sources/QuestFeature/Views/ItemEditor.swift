@@ -61,6 +61,20 @@ struct ItemEditor: View {
         .frame(width: 440)
         .foregroundStyle(theme.foreground)
         .onSubmit(save)
+        // `AinkradButton` carries no keyboard shortcut, so the `.defaultAction`
+        // the old `Button("Save")` had would otherwise be lost: with no text
+        // field focused there would be nothing for Return to do at all.
+        .background(defaultActionSave)
+    }
+
+    /// Return-with-nothing-focused commits, exactly as the pre-kit
+    /// `Button("Save").keyboardShortcut(.defaultAction)` did.
+    private var defaultActionSave: some View {
+        Button("") { save() }
+            .keyboardShortcut(.defaultAction)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder private var fields: some View {
@@ -85,11 +99,20 @@ struct ItemEditor: View {
         }
     }
 
-    @ViewBuilder private var links: some View {
-        AinkradSectionHeader(title: "Links")
-        LinkListView(store: store, target: .item(draft.id),
-                     links: currentLinks, report: report)
-        LinkEditor(store: store, target: .item(draft.id), report: report)
+    /// Wrapped in its OWN submit scope. SwiftUI runs submit actions
+    /// innermost-first and then PROPAGATES OUTWARD unless a scope blocks it —
+    /// it does not shadow. Without `.submitScope()`, Return in the link
+    /// identifier field would run `LinkEditor.add()` and then fall through to
+    /// this editor's `.onSubmit(save)`, adding the link and immediately saving
+    /// and closing the whole editor. Return here must add a link and stop.
+    private var links: some View {
+        VStack(alignment: .leading, spacing: AinkradSpacing.md) {
+            AinkradSectionHeader(title: "Links")
+            LinkListView(store: store, target: .item(draft.id),
+                         links: currentLinks, report: report)
+            LinkEditor(store: store, target: .item(draft.id), report: report)
+        }
+        .submitScope()
     }
 
     private var statusIDs: [String] { document.project.statusScheme.statuses.map(\.id) }

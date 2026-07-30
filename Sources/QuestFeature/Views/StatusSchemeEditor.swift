@@ -102,20 +102,26 @@ struct StatusSchemeEditor: View {
     /// so a toast is the right shape; the STALE-REFUSAL branch below still
     /// re-seeds the rows, which is the part that must not be lost.
     let report: (String, AinkradStatus) -> Void
+    /// Owned by `ProjectSettingsSheet`, not by this view, so the sheet can see
+    /// its own confirm step. While a plan is pending the sheet must refuse to
+    /// save underneath it — otherwise Return would discard a plan the user is
+    /// looking at. One source of truth: this view is still the only writer.
+    @Binding var pendingPlan: SchemePlan.Plan?
 
     @State private var drafts: [StatusDraft]
     @State private var newName = ""
     @State private var reassignments: [String: String] = [:]
-    @State private var pendingPlan: SchemePlan.Plan?
 
     @Environment(\.ainkradTheme) private var theme
     @Environment(\.ainkradStatusColors) private var statusColors
 
     init(store: ProjectStore, project: Project,
-         report: @escaping (String, AinkradStatus) -> Void) {
+         report: @escaping (String, AinkradStatus) -> Void,
+         pendingPlan: Binding<SchemePlan.Plan?>) {
         self.store = store
         self.project = project
         self.report = report
+        _pendingPlan = pendingPlan
         _drafts = State(initialValue: StatusDraft.drafts(from: project.statusScheme))
     }
 
@@ -191,11 +197,25 @@ struct StatusSchemeEditor: View {
                         }
                     }
                 }
+                // Restores the `.defaultAction` the pre-kit `Button("Apply")`
+                // carried. Mounted ONLY while a plan is pending, and the
+                // sheet's own default-action Save is mounted only while one is
+                // NOT — so exactly one default action exists at any moment and
+                // Return can never mean two things.
+                .background(defaultActionApply(pendingPlan))
             } else {
                 AinkradButton(title: "Review changes", style: .secondary, action: review)
             }
         }
         .foregroundStyle(theme.foreground)
+    }
+
+    private func defaultActionApply(_ plan: SchemePlan.Plan) -> some View {
+        Button("") { apply(plan) }
+            .keyboardShortcut(.defaultAction)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
     }
 
     private var items: [WorkItem] { store.allItems(in: project.id) }

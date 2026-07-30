@@ -59,6 +59,10 @@ struct ProjectSettingsSheet: View {
 
     @State private var draft: Project
     @State private var colorToken: ProjectColorToken
+    /// The scheme editor's confirm step, hoisted here so this sheet can see it.
+    /// `StatusSchemeEditor` remains its only writer; this sheet only READS it,
+    /// to refuse to save while a plan is awaiting confirmation.
+    @State private var pendingSchemePlan: SchemePlan.Plan?
 
     @Environment(\.ainkradTheme) private var theme
     @Environment(\.ainkradStatusColors) private var statusColors
@@ -77,30 +81,24 @@ struct ProjectSettingsSheet: View {
         VStack(alignment: .leading, spacing: AinkradSpacing.md) {
             AinkradSectionHeader(title: "Project settings", subtitle: draft.name)
 
-            AinkradFormRow(title: "Name") {
-                AinkradTextField(text: $draft.name, placeholder: "Name")
+            // `.ainkradModal` is an overlay scoped to the presenter's bounds
+            // with NO intrinsic scrolling — unlike the `.sheet` it replaced,
+            // which sized its own window. Header + fields + the scheme editor
+            // (a 180pt list, an add row, one row per occupied removal, and the
+            // confirm block) can easily exceed the shell's height, and without
+            // this cap the button row below would be pushed out of reach with
+            // no way to scroll back to it.
+            ScrollView {
+                VStack(alignment: .leading, spacing: AinkradSpacing.md) {
+                    fields
+                    StatusSchemeEditor(store: store, project: draft, report: report,
+                                       pendingPlan: $pendingSchemePlan)
+                }
+                .padding(.trailing, AinkradSpacing.xs)
             }
-            AinkradFormRow(title: "Summary") {
-                AinkradTextField(text: $draft.summaryText, placeholder: "Summary")
-            }
-            AinkradFormRow(title: "Icon", help: "An SF Symbol name") {
-                AinkradTextField(text: $draft.icon, placeholder: "SF Symbol")
-            }
-            AinkradFormRow(title: "Colour") {
-                AinkradSelect(items: ProjectColorToken.allCases, selection: $colorToken,
-                              label: { $0.title },
-                              swatch: { $0.color(tokens: theme, statusColors: statusColors) })
-            }
-            // The kind picker only relabels the project; it does NOT change an
-            // existing project's status scheme. Schemes ARE editable now, via
-            // the `StatusSchemeEditor` below — this picker still does not
-            // retroactively switch one.
-            AinkradFormRow(title: "Kind") {
-                AinkradSegmentedPicker(items: [ProjectKind.software, .general],
-                                       selection: $draft.kind) { $0.settingsTitle }
-            }
-
-            StatusSchemeEditor(store: store, project: draft, report: report)
+            // A deliberate cap, matching `ItemEditor`'s, so the buttons below
+            // always stay on screen.
+            .frame(maxHeight: 420)
 
             HStack {
                 AinkradButton(title: "Cancel", style: .secondary, action: onClose)
@@ -113,9 +111,55 @@ struct ProjectSettingsSheet: View {
         .frame(width: 420)
         .foregroundStyle(theme.foreground)
         .onSubmit(save)
+        // Mounted only while NO scheme plan is pending; `StatusSchemeEditor`
+        // mounts its own default-action Apply while one IS. Exactly one
+        // default action exists at any moment, so Return is never ambiguous.
+        .background(pendingSchemePlan == nil ? defaultActionSave : nil)
+    }
+
+    /// Return-with-nothing-focused commits, exactly as the pre-kit
+    /// `Button("Save").keyboardShortcut(.defaultAction)` did.
+    @ViewBuilder private var defaultActionSave: some View {
+        Button("") { save() }
+            .keyboardShortcut(.defaultAction)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private var fields: some View {
+        AinkradFormRow(title: "Name") {
+            AinkradTextField(text: $draft.name, placeholder: "Name")
+        }
+        AinkradFormRow(title: "Summary") {
+            AinkradTextField(text: $draft.summaryText, placeholder: "Summary")
+        }
+        AinkradFormRow(title: "Icon", help: "An SF Symbol name") {
+            AinkradTextField(text: $draft.icon, placeholder: "SF Symbol")
+        }
+        AinkradFormRow(title: "Colour") {
+            AinkradSelect(items: ProjectColorToken.allCases, selection: $colorToken,
+                          label: { $0.title },
+                          swatch: { $0.color(tokens: theme, statusColors: statusColors) })
+        }
+        // The kind picker only relabels the project; it does NOT change an
+        // existing project's status scheme. Schemes ARE editable now, via
+        // the `StatusSchemeEditor` below — this picker still does not
+        // retroactively switch one.
+        AinkradFormRow(title: "Kind") {
+            AinkradSegmentedPicker(items: [ProjectKind.software, .general],
+                                   selection: $draft.kind) { $0.settingsTitle }
+        }
     }
 
     private func save() {
+        // A pending scheme plan is a confirm step the user is looking at.
+        // Saving now would close the sheet and abandon it, so Return (or the
+        // Save button) refuses instead of silently discarding the plan.
+        guard pendingSchemePlan == nil else {
+            report("Apply or cancel the status changes first.", .warning)
+            return
+        }
         var draft = draft
         switch ProjectSettingsValidation.validate(name: draft.name) {
         case .invalid(let message):
