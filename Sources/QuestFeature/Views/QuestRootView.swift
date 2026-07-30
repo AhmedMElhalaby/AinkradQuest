@@ -1,36 +1,6 @@
 import SwiftUI
 import AinkradAppKit
 
-public enum QuestSurface: String, CaseIterable, Identifiable, Sendable {
-    case today, overview, list, board, timeline
-
-    public var id: String { rawValue }
-    public static let landing = QuestSurface.today
-
-    public var title: String {
-        switch self {
-        case .today: "Today"
-        case .overview: "Overview"
-        case .list: "List"
-        case .board: "Board"
-        case .timeline: "Timeline"
-        }
-    }
-
-    public var icon: String {
-        switch self {
-        case .today: "tray.full"
-        case .overview: "square.text.square"
-        case .list: "list.bullet.indent"
-        case .board: "rectangle.split.3x1"
-        case .timeline: "calendar.day.timeline.left"
-        }
-    }
-
-    /// Today is cross-project; everything else reads one project's document.
-    public var requiresProject: Bool { self != .today }
-}
-
 public struct QuestRootView: View {
     @Bindable var store: ProjectStore
     let theme: HostTheme
