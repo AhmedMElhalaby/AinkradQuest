@@ -100,4 +100,23 @@ struct BoardGroupingTests {
         #expect(BoardGrouping.groupedByEpic(items: [epic], scheme: .softwareDefault,
                                             filter: ItemFilter()).isEmpty)
     }
+
+    @Test("a live item left under a soft-deleted epic surfaces in a trailing No-epic group, not dropped")
+    func liveItemUnderDeletedEpicSurfacesAsOrphan() throws {
+        var epic = WorkItem(id: UUID(), projectID: projectID, parentID: nil, type: .epic,
+                            title: "Gone", statusID: "todo")
+        epic.deletedAt = Date()
+        let orphan = WorkItem(id: UUID(), projectID: projectID, parentID: epic.id, type: .task,
+                              title: "Orphan", statusID: "todo")
+
+        let groups = BoardGrouping.groupedByEpic(items: [epic, orphan], scheme: .softwareDefault,
+                                                 filter: ItemFilter())
+
+        #expect(groups.count == 1)
+        #expect(groups[0].isOrphanGroup)
+        #expect(groups[0].epic.id != epic.id)
+        #expect(groups[0].epic.title == "No epic")
+        try #expect(groups[0].columns.first { $0.status.id == "todo" }?.items.map(\.title)
+                    == ["Orphan"])
+    }
 }

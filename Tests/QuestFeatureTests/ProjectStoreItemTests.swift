@@ -186,4 +186,23 @@ struct ProjectStoreItemTests {
             try store.updateItem(cyclicItem, actor: .user)
         }
     }
+
+    @Test("moveItem does not refuse reparenting onto a soft-deleted epic (known gap, tracked separately)")
+    func moveOntoDeletedParentIsNotRefused() throws {
+        let (store, project) = makeStore()
+        let epic = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                        title: "M1", statusID: "todo", actor: .user)
+        let other = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                         title: "M2", statusID: "todo", actor: .user)
+        let item = try store.createItem(projectID: project.id, parentID: other.id, type: .task,
+                                        title: "Task", statusID: "todo", actor: .user)
+        try store.deleteItem(epic.id, actor: .user)
+
+        try store.moveItem(item.id, toParent: epic.id, orderIndex: 0, actor: .user)
+
+        let live = store.items(in: project.id)
+        #expect(live.contains { $0.id == item.id })
+        #expect(!live.contains { $0.id == epic.id })
+        #expect(live.first { $0.id == item.id }?.parentID == epic.id)
+    }
 }
