@@ -24,7 +24,7 @@ packages:
     # defaulted parameters in 98cb823, so the mangled symbol Quest linked against
     # (`init(title:help:control:)`) no longer exists in the framework the host
     # embeds. Source compiled either way — only linking told the truth.
-    revision: 98cb8235d52a7eac51dae8948e8e3c9d19884aac
+    revision: 60036ad9abe5d0ca4e84109bcc78a51f7b8578f0
 targets:
   QuestFeature:
     type: library.static
