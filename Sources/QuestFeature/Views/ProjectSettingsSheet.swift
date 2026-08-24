@@ -51,6 +51,7 @@ enum ProjectSettingsValidation {
 /// `onClose`; a `dismiss()` here would compile and do nothing.
 struct ProjectSettingsSheet: View {
     @Bindable var store: ProjectStore
+    let registry: ConnectionRegistry
     let report: (String, AinkradStatus) -> Void
     /// Asks the presenter to take this sheet down. Called ONLY as the last
     /// statement of a path, because it unmounts this subtree — a `@State`
@@ -67,10 +68,11 @@ struct ProjectSettingsSheet: View {
     @Environment(\.ainkradTheme) private var theme
     @Environment(\.ainkradStatusColors) private var statusColors
 
-    init(store: ProjectStore, project: Project,
+    init(store: ProjectStore, registry: ConnectionRegistry, project: Project,
          report: @escaping (String, AinkradStatus) -> Void,
          onClose: @escaping () -> Void) {
         self.store = store
+        self.registry = registry
         self.report = report
         self.onClose = onClose
         _draft = State(initialValue: project)
@@ -91,6 +93,14 @@ struct ProjectSettingsSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: AinkradSpacing.md) {
                     fields
+                    // Reads the STORE's live project, not `draft`: binding a
+                    // connection or attaching a repo commits immediately
+                    // through `ProjectStore` (like `StatusSchemeEditor`'s
+                    // Apply), so this must reflect what was just written
+                    // rather than the snapshot captured at `init`.
+                    ProjectConnectionSection(store: store, registry: registry,
+                                             project: store.openProject(draft.id)?.project ?? draft,
+                                             report: report)
                     StatusSchemeEditor(store: store, project: draft, report: report,
                                        pendingPlan: $pendingSchemePlan)
                 }
