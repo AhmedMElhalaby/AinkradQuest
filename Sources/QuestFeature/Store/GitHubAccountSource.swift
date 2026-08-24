@@ -31,7 +31,7 @@ public struct GitHubAccount: Sendable, Hashable, Identifiable {
 /// Typed failures for the `gh` CLI seam. Written to be read by a person AND by
 /// the assistant, matching `QuestError.message`'s convention — each message
 /// says what to do next, not just what went wrong.
-public enum GitHubCLIError: Error, Equatable, Sendable {
+public enum GitHubCLIError: Error, Equatable, Sendable, LocalizedError {
     /// `gh` was not found at any known install location or on `PATH`.
     case cliNotInstalled
     /// `gh` is installed but reports no accounts (`hosts` is empty/missing).
@@ -42,6 +42,11 @@ public enum GitHubCLIError: Error, Equatable, Sendable {
     /// stdout was not the JSON shape expected — a truncated excerpt for
     /// diagnosis, never the raw payload logged elsewhere.
     case unparsableOutput(String)
+    /// The subprocess did not exit within the bound in `GitHubCLI.runProcess`.
+    /// Kept distinct from `.commandFailed`: a hang (locked Keychain, an MDM
+    /// hook, an expired credential prompting interactive re-auth) has a
+    /// different remedy than a normal non-zero exit.
+    case timedOut
 
     public var message: String {
         switch self {
@@ -56,8 +61,18 @@ public enum GitHubCLIError: Error, Equatable, Sendable {
         case .unparsableOutput(let excerpt):
             "Could not understand GitHub CLI's output (expected JSON): \(excerpt). "
             + "This may mean an incompatible `gh` version — try updating it."
+        case .timedOut:
+            "GitHub CLI stopped responding. Try running the same `gh auth` command "
+            + "yourself in a terminal to see what it's waiting on (a locked Keychain "
+            + "or an interactive sign-in prompt are common causes)."
         }
     }
+
+    /// Routes `localizedDescription` through the same actionable text,
+    /// matching `CredentialError`'s exact shape — otherwise a call site that
+    /// only knows `Error.localizedDescription` gets Foundation's generic
+    /// fallback instead of the message written for a person to read.
+    public var errorDescription: String? { message }
 }
 
 /// The seam Task B's UI asks through. Mirrors `CredentialStore`'s shape: a

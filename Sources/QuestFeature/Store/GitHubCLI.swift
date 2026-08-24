@@ -16,6 +16,12 @@ public final class GitHubCLI: GitHubAccountSource, Sendable {
         "/usr/bin/gh",
     ]
 
+    /// Generous for a local CLI call (Keychain/config reads normally complete
+    /// in milliseconds), but short enough that a hang — a locked Keychain, an
+    /// MDM hook, an expired credential prompting interactive re-auth, a
+    /// first-run telemetry prompt — does not freeze the UI for long. 5s.
+    private static let defaultTimeout: TimeInterval = 5
+
     private let binaryPath: String
 
     public init() throws {
@@ -66,17 +72,31 @@ public final class GitHubCLI: GitHubAccountSource, Sendable {
         String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300))
     }
 
-    private struct ProcessResult {
+    /// Internal (not private) so `GitHubCLITests` can drive it directly with
+    /// a stand-in binary (e.g. `/bin/sleep`) and a short timeout, to test the
+    /// timeout path deterministically without depending on a real slow `gh`.
+    struct ProcessResult {
         let exitCode: Int32
         let stdout: String
         let stderr: String
     }
 
-    /// No explicit timeout: both commands are local reads (Keychain/config
-    /// lookups), not network calls — `gh` does not hit the network to answer
-    /// `auth status` or `auth token`. If that assumption ever proves wrong in
-    /// practice, add a `waitUntilExit`-with-deadline here.
-    private static func runProcess(executable: String, arguments: [String]) throws -> ProcessResult {
+    /// Reads both pipes concurrently on background queues rather than
+    /// sequentially. Reading stdout to EOF before touching stderr deadlocks
+    /// if the child fills the stderr pipe's buffer while blocked writing to
+    /// it — the parent would never get around to draining stderr. Starting
+    /// both reads before `waitUntilExit` avoids that classic pipe deadlock.
+    ///
+    /// Bounded by `timeout`: on expiry the process is terminated and a
+    /// distinct `.timedOut` error is thrown, rather than looking like a
+    /// normal command failure — a hang has a different remedy (the user runs
+    /// the command by hand to see what it's stuck on) than an exit-code
+    /// failure does.
+    static func runProcess(
+        executable: String,
+        arguments: [String],
+        timeout: TimeInterval = defaultTimeout
+    ) throws -> ProcessResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -86,10 +106,39 @@ public final class GitHubCLI: GitHubAccountSource, Sendable {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        let readGroup = DispatchGroup()
+        var stdoutData = Data()
+        var stderrData = Data()
+
+        readGroup.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            readGroup.leave()
+        }
+        readGroup.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            readGroup.leave()
+        }
+
+        let exitSemaphore = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exitSemaphore.signal() }
+
         try process.run()
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+
+        if exitSemaphore.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            // Give the process a moment to actually die and close its pipe
+            // ends so the background reads unblock; this is a bounded grace
+            // period, not an open-ended wait.
+            _ = exitSemaphore.wait(timeout: .now() + 1)
+            _ = readGroup.wait(timeout: .now() + 1)
+            throw GitHubCLIError.timedOut
+        }
+
+        // Process has exited; the pipe write ends are now closed, so these
+        // background reads are guaranteed to reach EOF promptly.
+        readGroup.wait()
 
         return ProcessResult(
             exitCode: process.terminationStatus,

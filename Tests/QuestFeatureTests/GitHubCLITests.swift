@@ -169,14 +169,44 @@ struct GitHubCLITests {
         #expect(GitHubCLIError.notLoggedIn.message.localizedCaseInsensitiveContains("gh auth login"))
         #expect(GitHubCLIError.commandFailed(stderr: "boom").message.contains("boom"))
         #expect(!GitHubCLIError.unparsableOutput("bad").message.isEmpty)
+        #expect(GitHubCLIError.timedOut.message.localizedCaseInsensitiveContains("stopped responding"))
         // None of the messages should be Foundation's generic fallback text.
         for error in [
             GitHubCLIError.cliNotInstalled,
             .notLoggedIn,
             .commandFailed(stderr: "boom"),
             .unparsableOutput("bad"),
+            .timedOut,
         ] {
             #expect(!error.message.contains("couldn't be completed"))
         }
+    }
+
+    @Test("errorDescription routes through the actionable message, like CredentialError")
+    func localizedErrorConformance() {
+        let error: Error = GitHubCLIError.notLoggedIn
+        #expect(error.localizedDescription == GitHubCLIError.notLoggedIn.message)
+    }
+
+    @Test("a hung process is terminated at the timeout and throws .timedOut, not .commandFailed")
+    func timeoutPath() {
+        // `/bin/sleep 5` stands in for a hung `gh` — a fixed, always-present
+        // binary, so this is deterministic and fast (0.1s bound) rather than
+        // depending on a real slow `gh` invocation.
+        do {
+            _ = try GitHubCLI.runProcess(executable: "/bin/sleep", arguments: ["5"], timeout: 0.1)
+            Issue.record("expected .timedOut to be thrown")
+        } catch let error as GitHubCLIError {
+            #expect(error == .timedOut)
+        } catch {
+            Issue.record("expected GitHubCLIError.timedOut, got \(error)")
+        }
+    }
+
+    @Test("a process that exits quickly does not time out")
+    func noTimeoutForFastProcess() throws {
+        let result = try GitHubCLI.runProcess(executable: "/bin/echo", arguments: ["hello"], timeout: 2)
+        #expect(result.exitCode == 0)
+        #expect(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "hello")
     }
 }
