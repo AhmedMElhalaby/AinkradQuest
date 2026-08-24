@@ -18,12 +18,17 @@ packages:
     # which is the inherited claim that caused a day of misdiagnosis. Read the
     # truth from the host, never from this comment:
     #   git -C ../Ainkrad/build/SourcePackages/checkouts/AinkradAppKit rev-parse HEAD
-    # 98cb823 = "Merge feat/settings-kit-composition" — the revision the host's
-    # build actually checks out. The previous pin (d5d994b, one day older) built
-    # and tested fine but died at `Bundle.load()`: `AinkradFormRow`'s init gained
-    # defaulted parameters in 98cb823, so the mangled symbol Quest linked against
-    # (`init(title:help:control:)`) no longer exists in the framework the host
-    # embeds. Source compiled either way — only linking told the truth.
+    # 60036ad9abe5d0ca4e84109bcc78a51f7b8578f0 is the CURRENT pin, verified
+    # against that command. If you change `revision:` below, re-run the command
+    # above and confirm it matches before trusting the new pin.
+    #
+    # History, kept as an example of what "close enough" costs: an earlier pin,
+    # d5d994b (one day older than 98cb823), built and tested fine but died at
+    # `Bundle.load()` — `AinkradFormRow`'s init gained defaulted parameters in
+    # 98cb823, so the mangled symbol Quest linked against
+    # (`init(title:help:control:)`) no longer existed in the framework the host
+    # embedded. Source compiled either way — only linking told the truth. That
+    # is the failure mode this comment exists to prevent recurring.
     revision: 60036ad9abe5d0ca4e84109bcc78a51f7b8578f0
 targets:
   QuestFeature:
