@@ -77,6 +77,28 @@ struct ViewSourceInvariantsTests {
         }
     }
 
+    /// Trap: `draft` in `ProjectSettingsSheet` is an init-time snapshot, but
+    /// `ProjectConnectionSection` commits a bind or repo attach immediately
+    /// through the store, not through `draft`. Without refreshing `draft`'s
+    /// `connectionID`/`remoteProjectKey`/`repos` from the store right before
+    /// `updateProject` writes it, Save silently reverts the user's bind and
+    /// repo attachments — a data-loss blocker that shipped and passed every
+    /// other test in this suite. `mergingLiveConnectionFields` is the fix;
+    /// nothing else pins its call site, so deleting the call leaves all other
+    /// tests green.
+    @Test("ProjectSettingsSheet's save path merges live connection fields before writing")
+    func saveMergesLiveConnectionFields() throws {
+        let found = try ViewSource.load().first { $0.name == "ProjectSettingsSheet.swift" }
+        let file = try #require(found, "ProjectSettingsSheet.swift not found in \(ViewSource.viewsDirectory.path)")
+        #expect(file.contains("mergingLiveConnectionFields"), """
+            ProjectSettingsSheet.swift no longer calls `mergingLiveConnectionFields` on its \
+            save path. `draft` is an init-time snapshot, but `ProjectConnectionSection` commits a \
+            bind or repo attach immediately through the store — without this merge, Save silently \
+            reverts the user's connectionID/remoteProjectKey/repos to their value when the sheet \
+            was opened.
+            """)
+    }
+
     /// Trap: `AinkradButton` carries NO keyboard shortcut — in the whole kit
     /// only `AinkradModal`/`AinkradDrawer` bind keys. Migrating off SwiftUI's
     /// `Button` therefore drops every `.defaultAction` silently. This is the
