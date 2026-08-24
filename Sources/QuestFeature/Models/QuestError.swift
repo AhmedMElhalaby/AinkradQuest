@@ -29,6 +29,7 @@ public enum QuestError: Error, Equatable, Sendable {
     case connectionInUse(UUID, Int)
     case duplicateRepo(String)
     case repoNotFound(UUID)
+    case localWriteMustUseStore
 
     public var message: String {
         switch self {
@@ -67,6 +68,8 @@ public enum QuestError: Error, Equatable, Sendable {
             "\(slug) is already attached to this project on that connection."
         case .repoNotFound(let id):
             "No attached repo with id \(id)."
+        case .localWriteMustUseStore:
+            "Local writes go through ProjectStore, not the provider seam."
         }
     }
 }
