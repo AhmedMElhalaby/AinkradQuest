@@ -87,10 +87,13 @@ struct GitHubAccountPickerStateTests {
         var draft = ConnectionDraft(provider: .githubProjects)
         draft.apply(login: "ahmed-work", token: "gho_abc123")
         #expect(draft.tokenProvenance == .githubCLI)
-        draft.secret = "typed-over"
-        // Applying `apply` again models what the picker view-model does; the
-        // editor's own secret binding is what resets provenance on a manual
-        // keystroke (covered by view wiring, not this pure-logic test).
+
+        // `ConnectionEditor.secretBinding` calls `setManualSecret(_:)` on
+        // every keystroke — this is the actual rule under test, not a stand-in
+        // for it, since the method is the real call site the view uses.
+        draft.setManualSecret("typed-over")
+
         #expect(draft.secret == "typed-over")
+        #expect(draft.tokenProvenance == .manual)
     }
 }

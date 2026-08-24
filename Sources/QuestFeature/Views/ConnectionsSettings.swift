@@ -58,6 +58,17 @@ public struct ConnectionDraft: Equatable {
         secret = token
         tokenProvenance = .githubCLI
     }
+
+    /// Writes a hand-typed secret and disowns any previous `gh` pick — a
+    /// token pulled from `gh` that the user then types over is no longer a
+    /// `gh` token, and a future refresh path must not try to re-pull it from
+    /// the CLI. Extracted so this rule is unit-testable on its own, since
+    /// `ConnectionEditor.secretBinding` (the only call site today) needs a
+    /// view host to exercise directly.
+    public mutating func setManualSecret(_ value: String) {
+        secret = value
+        tokenProvenance = .manual
+    }
 }
 
 /// Backs the "pick a `gh` account" alternative to typing a token, for the
@@ -298,7 +309,7 @@ struct ConnectionEditor: View {
     /// stale pick must never be credited as CLI-backed once the user has
     /// typed over it.
     private var secretBinding: Binding<String> {
-        Binding(get: { draft.secret }, set: { draft.secret = $0; draft.tokenProvenance = .manual })
+        Binding(get: { draft.secret }, set: { draft.setManualSecret($0) })
     }
 
     var body: some View {
@@ -369,7 +380,7 @@ struct ConnectionEditor: View {
                 if picker.isLoading {
                     // A dead-looking button is worse than a spinner — the
                     // subprocess is fast, but not instant.
-                    ProgressView().controlSize(.small)
+                    AinkradSpinner(size: 14)
                 } else {
                     AinkradButton(title: picker.accounts.isEmpty ? "Find accounts" : "Refresh", style: .secondary) {
                         Task { await picker.load() }
