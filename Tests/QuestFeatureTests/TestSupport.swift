@@ -39,3 +39,16 @@ final class FailingSaveProjectRepository: ProjectRepository {
         self.connections = connections
     }
 }
+
+/// A `CredentialStore` whose `setSecret` throws on every deletion (a `nil`
+/// secret), so tests can verify a failed Keychain delete surfaces rather than
+/// being swallowed. Non-deletion writes still succeed, matching
+/// `FailingSaveProjectRepository`'s "only the write under test fails" shape.
+final class DeleteFailingCredentialStore: CredentialStore, @unchecked Sendable {
+    private var storage: [String: String] = [:]
+    func secret(forRef ref: String) -> String? { storage[ref] }
+    func setSecret(_ secret: String?, forRef ref: String) throws {
+        guard let secret else { throw CredentialError.keychain(errSecIO) }
+        storage[ref] = secret
+    }
+}

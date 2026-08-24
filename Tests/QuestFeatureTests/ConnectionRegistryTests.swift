@@ -99,6 +99,21 @@ struct ConnectionRegistryTests {
         #expect(reloaded.secret(for: reloaded.connections[0].id) == "gh-token")
     }
 
+    @Test("a failed secret deletion still removes the connection, and surfaces via persistenceFailure")
+    func removeSurfacesAFailedSecretDeletion() throws {
+        let credentials = DeleteFailingCredentialStore()
+        let registry = ConnectionRegistry(repository: InMemoryProjectRepository(),
+                                          credentials: credentials)
+        let connection = try registry.addConnection(provider: .linear, accountLabel: "L",
+                                                    accountIdentifier: "l", baseURL: nil, secret: "s")
+
+        try registry.removeConnection(connection.id, boundProjectCount: 0)
+
+        #expect(registry.connections.isEmpty)
+        let failure = try #require(registry.persistenceFailure)
+        #expect(failure.lowercased().contains("token"))
+    }
+
     @Test("a failed persist raises the banner and keeps the in-memory change")
     func persistenceFailure() throws {
         let repository = FailingSaveProjectRepository()
