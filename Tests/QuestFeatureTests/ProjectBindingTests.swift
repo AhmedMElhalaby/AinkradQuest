@@ -137,4 +137,28 @@ struct ProjectBindingTests {
         #expect(project.connectionID == nil)
         #expect(project.repos.isEmpty)
     }
+
+    @Test("severing clears bindings on live AND trashed projects")
+    func severBindings() throws {
+        let store = makeStore()
+        let connectionID = UUID()
+        let live = store.createProject(name: "Live", kind: .software, actor: .user)
+        let trashed = store.createProject(name: "Trashed", kind: .software, actor: .user)
+        let other = store.createProject(name: "Other", kind: .software, actor: .user)
+        let otherConnection = UUID()
+        try store.bindProject(live.id, to: connectionID, remoteProjectKey: "L", actor: .user)
+        try store.bindProject(trashed.id, to: connectionID, remoteProjectKey: "T", actor: .user)
+        try store.bindProject(other.id, to: otherConnection, remoteProjectKey: "O", actor: .user)
+        try store.deleteProject(trashed.id, actor: .user)
+
+        store.severBindings(toConnection: connectionID, actor: .user)
+
+        #expect(store.openProject(live.id)?.project.connectionID == nil)
+        #expect(store.openProject(live.id)?.project.remoteProjectKey == nil)
+        // The trashed one is the whole reason this method exists: restoring it
+        // must not resurrect a binding to a deleted connection.
+        #expect(store.openProject(trashed.id)?.project.connectionID == nil)
+        // A project on a DIFFERENT connection is untouched.
+        #expect(store.openProject(other.id)?.project.connectionID == otherConnection)
+    }
 }

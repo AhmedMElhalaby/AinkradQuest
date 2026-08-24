@@ -36,12 +36,26 @@ public struct QuestApp: AinkradApp {
         }
     }
 
+    /// Cached per host, the same shape as `stores`: the registry holds
+    /// in-memory state (connections, `persistenceFailure`) that must be the
+    /// SAME instance the settings view mutates, not a fresh copy reloaded
+    /// from disk on every settings open.
+    @MainActor private static let registries = PluginInstanceStorage<ConnectionRegistry>()
+
+    @MainActor private static func registry(for host: HostServices) -> ConnectionRegistry {
+        registries.value(for: instance(of: host)) {
+            ConnectionRegistry(repository: DocumentProjectRepository(documents: host.documents),
+                              credentials: KeychainCredentialStore())
+        }
+    }
+
     public static func makeRootView(host: HostServices) -> AnyView {
         AnyView(QuestShell(store: store(for: host), theme: host.theme, documents: host.documents))
     }
 
     public static func makeSettingsView(host: HostServices) -> AnyView {
-        AnyView(QuestSettingsView(presentation: host.presentation, documents: host.documents))
+        AnyView(QuestSettingsView(presentation: host.presentation, documents: host.documents,
+                                  store: store(for: host), registry: registry(for: host)))
     }
 
     public static func chromeFill(host: HostServices) -> Color? {
@@ -83,6 +97,7 @@ extension QuestApp: AinkradAppMCP {
 extension QuestApp: AinkradAppTeardown {
     public static func teardown(instance: PluginInstanceID) {
         stores.remove(instance)
+        registries.remove(instance)
         // The MCP server's tool closures capture the operations layer, which
         // captures this instance's store. Leaving it registered would let the
         // assistant keep driving an app the user shut.

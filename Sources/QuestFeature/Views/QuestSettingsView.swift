@@ -16,6 +16,8 @@ import AinkradAppKit
 struct QuestSettingsView: View {
     let presentation: any PluginPresentationControl
     let documents: PluginDocumentStore
+    @Bindable var store: ProjectStore
+    @Bindable var registry: ConnectionRegistry
 
     @Environment(\.ainkradTheme) private var theme
     @Environment(\.ainkradTypography) private var typo
@@ -28,9 +30,12 @@ struct QuestSettingsView: View {
     @State private var grantRevision = 0
     @State private var error: String?
 
-    init(presentation: any PluginPresentationControl, documents: PluginDocumentStore) {
+    init(presentation: any PluginPresentationControl, documents: PluginDocumentStore,
+         store: ProjectStore, registry: ConnectionRegistry) {
         self.presentation = presentation
         self.documents = documents
+        self.store = store
+        self.registry = registry
         _mode = State(initialValue: presentation.current)
     }
 
@@ -47,6 +52,13 @@ struct QuestSettingsView: View {
                     }
                 }
             }
+
+            // Same reporting seam as the folder grants below: this view is
+            // mounted by the HOST's settings surface, outside `QuestShell`'s
+            // `.ainkradToastHost()`, so errors go to this standing banner
+            // rather than a toast.
+            ConnectionsSettings(registry: registry, store: store,
+                               report: { message, _ in error = message })
 
             AinkradSectionFrame(title: "Folder grants") {
                 VStack(alignment: .leading, spacing: AinkradSpacing.md) {

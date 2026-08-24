@@ -50,4 +50,25 @@ extension ProjectStore {
             .filter { $0.connectionID == connectionID }
             .count
     }
+
+    /// Clears every binding to `connectionID`, across live AND trashed projects.
+    ///
+    /// Called after a connection is deleted. `projectCount(boundTo:)` counts only
+    /// live projects — a connection that can never be deleted because something
+    /// sits forgotten in the trash is a worse failure than a stale field — so the
+    /// trashed ones are severed here instead. Non-throwing: the connection is
+    /// already gone, and refusing to sever would leave worse state than
+    /// proceeding. Individual failures surface through `persistenceFailure`.
+    public func severBindings(toConnection connectionID: UUID, actor: ActivityActor) {
+        let ids = (projects + trashedProjects).map(\.id)
+        for id in ids {
+            guard var project = openProject(id)?.project,
+                  project.connectionID == connectionID
+            else { continue }
+            // Both fields clear together, the same rule `unbindProject` follows.
+            project.connectionID = nil
+            project.remoteProjectKey = nil
+            try? updateProject(project, actor: actor)
+        }
+    }
 }
