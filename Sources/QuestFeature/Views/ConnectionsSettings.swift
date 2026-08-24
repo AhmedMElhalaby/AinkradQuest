@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import Observation
 import AinkradAppKit
 
 /// The add/edit form's state, split out of the view so validation is testable
@@ -10,6 +11,10 @@ public struct ConnectionDraft: Equatable {
     public var accountIdentifier: String = ""
     public var baseURLText: String = ""
     public var secret: String = ""
+    /// Set when `secret` was filled in by picking a `gh` account rather than
+    /// typing a token. Reset to `.manual` the moment the user edits the
+    /// secret field by hand, so a stale pick never gets credited as CLI-backed.
+    public var tokenProvenance: TokenProvenance = .manual
 
     public init(provider: ProviderKind) {
         self.provider = provider
@@ -45,6 +50,101 @@ public struct ConnectionDraft: Equatable {
     }
 
     public var isValid: Bool { validationMessage == nil }
+
+    /// Applies a successful `gh` account pick: fills the identifier and
+    /// secret and marks their provenance as CLI-backed.
+    public mutating func apply(login: String, token: String) {
+        accountIdentifier = login
+        secret = token
+        tokenProvenance = .githubCLI
+    }
+}
+
+/// Backs the "pick a `gh` account" alternative to typing a token, for the
+/// GitHub Projects provider only. Split out of `ConnectionEditor` so the
+/// logic — mapping an account pick or a `GitHubCLIError` to draft fields and
+/// display text — is testable without a view host, the same split
+/// `ConnectionDraft` gets.
+///
+/// `GitHubAccountSource.accounts()` and `.token(for:)` shell out and block, so
+/// every call into `source` here runs off the main actor (`Task.detached`)
+/// and only the result hop back onto it — a blocking subprocess on the main
+/// actor would freeze the window.
+@MainActor
+@Observable
+public final class GitHubAccountPickerState {
+    public private(set) var accounts: [GitHubAccount] = []
+    /// True while either `accounts()` or `token(for:)` is running off-actor.
+    public private(set) var isLoading = false
+    /// `.cliNotInstalled` and `.notLoggedIn` are expected, common states, not
+    /// rare errors — their `.message` is already actionable, so it is shown
+    /// here verbatim and the user carries on with manual entry.
+    public private(set) var errorMessage: String?
+
+    /// Builds the source lazily rather than holding one directly: the real
+    /// `GitHubCLI.init()` itself can shell out (locating the binary via
+    /// `/usr/bin/which` when it is not at a known path), so even
+    /// CONSTRUCTING the real conformance must happen off the main actor.
+    /// Defaults to the real CLI; tests inject `InMemoryGitHubAccountSource`.
+    private let makeSource: @Sendable () throws -> any GitHubAccountSource
+
+    public init(makeSource: @escaping @Sendable () throws -> any GitHubAccountSource = { try GitHubCLI() }) {
+        self.makeSource = makeSource
+    }
+
+    public convenience init(source: any GitHubAccountSource) {
+        self.init(makeSource: { source })
+    }
+
+    /// Loads the accounts `gh` already knows about. Safe to call repeatedly
+    /// (e.g. a "Refresh" action) — each call replaces the previous result.
+    public func load() async {
+        isLoading = true
+        errorMessage = nil
+        let makeSource = self.makeSource
+        let outcome = await Task.detached {
+            Result { try makeSource().accounts() }
+        }.value
+        isLoading = false
+        switch outcome {
+        case .success(let accounts):
+            self.accounts = accounts
+        case .failure(let error):
+            self.accounts = []
+            self.errorMessage = Self.message(for: error)
+        }
+    }
+
+    /// Fetches the token for `account`. Returns the login and token to write
+    /// into the draft on success (`pick(_:into:)` on `ConnectionDraft` does
+    /// that), or `nil` on failure — leaving the draft untouched, since the
+    /// caller keeps whatever was already typed — with the failure surfaced
+    /// through `errorMessage` instead.
+    ///
+    /// Returns a plain value rather than taking `draft` `inout` because an
+    /// `inout` binding cannot cross the `await` this method needs.
+    public func pick(_ account: GitHubAccount) async -> (login: String, token: String)? {
+        isLoading = true
+        errorMessage = nil
+        let makeSource = self.makeSource
+        let outcome = await Task.detached {
+            Result { try makeSource().token(for: account) }
+        }.value
+        isLoading = false
+        switch outcome {
+        case .success(let token):
+            return (account.login, token)
+        case .failure(let error):
+            self.errorMessage = Self.message(for: error)
+            return nil
+        }
+    }
+
+    private static func message(for error: Error) -> String {
+        // `.message`, never `.localizedDescription`, matching every other
+        // `GitHubCLIError` call site in this codebase.
+        (error as? GitHubCLIError)?.message ?? error.localizedDescription
+    }
 }
 
 /// Manage the accounts Quest can reach. One row per connection, showing which
@@ -170,17 +270,35 @@ struct ConnectionEditor: View {
 
     @Environment(\.ainkradTheme) private var theme
 
+    /// Backs the "pick a gh account" alternative, GitHub Projects only. Owned
+    /// here (not hoisted) — it holds no data that needs to survive this
+    /// editor closing, unlike `draft` itself.
+    @State private var picker: GitHubAccountPickerState
+
     /// Providers a user can actually add a connection for. `.local` is the
     /// native tracker, never something anyone connects to.
     private static let addableProviders: [ProviderKind] = [.jira, .linear, .githubProjects]
 
     init(draft: ConnectionDraft, registry: ConnectionRegistry,
          report: @escaping (String, AinkradStatus) -> Void,
-         onClose: @escaping () -> Void) {
+         onClose: @escaping () -> Void,
+         accountSource: (any GitHubAccountSource)? = nil) {
         _draft = State(initialValue: draft)
         self.registry = registry
         self.report = report
         self.onClose = onClose
+        if let accountSource {
+            _picker = State(initialValue: GitHubAccountPickerState(source: accountSource))
+        } else {
+            _picker = State(initialValue: GitHubAccountPickerState())
+        }
+    }
+
+    /// Any manual edit to the secret field disowns a previous `gh` pick — a
+    /// stale pick must never be credited as CLI-backed once the user has
+    /// typed over it.
+    private var secretBinding: Binding<String> {
+        Binding(get: { draft.secret }, set: { draft.secret = $0; draft.tokenProvenance = .manual })
     }
 
     var body: some View {
@@ -204,7 +322,14 @@ struct ConnectionEditor: View {
                 }
             }
             AinkradFormRow(title: "Token") {
-                AinkradSecureField(text: $draft.secret, placeholder: "Token")
+                AinkradSecureField(text: secretBinding, placeholder: "Token")
+            }
+
+            // Additive, never a replacement: the manual token field above is
+            // untouched, and this is the only path for a provider `gh` does
+            // not know. GitHub Projects only.
+            if draft.provider == .githubProjects {
+                githubAccountPicker
             }
 
             if let message = draft.validationMessage {
@@ -229,6 +354,63 @@ struct ConnectionEditor: View {
         .background(defaultActionSubmit)
     }
 
+    /// Inline expansion, not a modal: `.ainkradModal` renders in the MODIFIED
+    /// view's own bounds, and this editor is already the thing hoisted to
+    /// the settings root to avoid exactly that clipping — nesting a second
+    /// modal inside it would reintroduce the bug this file's own history
+    /// fixed. A section within the existing form is enough.
+    private var githubAccountPicker: some View {
+        VStack(alignment: .leading, spacing: AinkradSpacing.sm) {
+            HStack {
+                Text("Or use a gh account")
+                    .font(.caption)
+                    .foregroundStyle(theme.foreground.opacity(0.7))
+                Spacer()
+                if picker.isLoading {
+                    // A dead-looking button is worse than a spinner — the
+                    // subprocess is fast, but not instant.
+                    ProgressView().controlSize(.small)
+                } else {
+                    AinkradButton(title: picker.accounts.isEmpty ? "Find accounts" : "Refresh", style: .secondary) {
+                        Task { await picker.load() }
+                    }
+                }
+            }
+
+            ForEach(picker.accounts) { account in
+                AinkradButton(title: accountTitle(account), style: .secondary) {
+                    Task {
+                        if let picked = await picker.pick(account) {
+                            draft.apply(login: picked.login, token: picked.token)
+                        }
+                    }
+                }
+                .disabled(picker.isLoading)
+            }
+
+            // `.cliNotInstalled` / `.notLoggedIn` land here too — they are
+            // expected, common states, not rare errors, and their `.message`
+            // already says what to do next. Shown via the same inline-message
+            // styling as `draft.validationMessage`, not a new modal.
+            if let message = picker.errorMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(theme.foreground.opacity(0.7))
+            }
+        }
+    }
+
+    /// Enough detail to choose: login, host (an Enterprise account reads
+    /// differently from github.com), which is active, and an upfront warning
+    /// when the account cannot work — beats a confusing failure later.
+    private func accountTitle(_ account: GitHubAccount) -> String {
+        var title = "\(account.login) · \(account.host)"
+        if account.isActive { title += " · active" }
+        if !account.hasRepoScope { title += " · no repo scope" }
+        if !account.isHealthy { title += " · unhealthy" }
+        return title
+    }
+
     /// Return-with-nothing-focused submits, exactly as `ItemEditor`'s
     /// `defaultActionSave` does.
     private var defaultActionSubmit: some View {
@@ -246,7 +428,8 @@ struct ConnectionEditor: View {
                                        accountLabel: draft.accountLabel.trimmingCharacters(in: .whitespacesAndNewlines),
                                        accountIdentifier: draft.accountIdentifier.trimmingCharacters(in: .whitespacesAndNewlines),
                                        baseURL: draft.baseURL,
-                                       secret: draft.secret)
+                                       secret: draft.secret,
+                                       tokenProvenance: draft.tokenProvenance)
             // LAST statement on this path — everything after it would run in an
             // unmounted subtree.
             onClose()

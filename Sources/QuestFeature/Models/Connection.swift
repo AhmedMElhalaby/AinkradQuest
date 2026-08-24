@@ -7,6 +7,19 @@ public enum ProviderKind: String, Codable, Sendable {
     case local, jira, linear, githubProjects
 }
 
+/// Where a connection's secret came from. Nothing reads this yet beyond
+/// display, but it is recorded so a future refresh path can know whether a
+/// stale token can be silently re-pulled from `gh` or needs the user to type
+/// a new one.
+public enum TokenProvenance: String, Codable, Sendable {
+    /// Typed in by hand — the only path for a provider `gh` does not know, or
+    /// a token that predates this feature.
+    case manual
+    /// Fetched via `gh auth token` from an account the GitHub CLI already
+    /// knew about.
+    case githubCLI
+}
+
 /// One authenticated account at one provider. Deliberately NOT a global app
 /// setting: two Jira sites and three GitHub identities coexist, and each
 /// project binds to exactly one of them.
@@ -24,6 +37,9 @@ public struct Connection: Codable, Sendable, Identifiable, Hashable {
     /// document is written to disk in the clear.
     public var credentialRef: String
     public var createdAt: Date
+    /// Where the secret behind `credentialRef` came from. Defaults to
+    /// `.manual` for anything that predates this field.
+    public var tokenProvenance: TokenProvenance
 
     public static func credentialRef(for id: UUID) -> String {
         "quest.connection.\(id.uuidString)"
@@ -31,7 +47,7 @@ public struct Connection: Codable, Sendable, Identifiable, Hashable {
 
     public init(id: UUID, provider: ProviderKind, accountLabel: String,
                 accountIdentifier: String, baseURL: URL? = nil,
-                createdAt: Date = Date()) {
+                createdAt: Date = Date(), tokenProvenance: TokenProvenance = .manual) {
         self.id = id
         self.provider = provider
         self.accountLabel = accountLabel
@@ -39,10 +55,12 @@ public struct Connection: Codable, Sendable, Identifiable, Hashable {
         self.baseURL = baseURL
         self.credentialRef = Self.credentialRef(for: id)
         self.createdAt = createdAt
+        self.tokenProvenance = tokenProvenance
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, provider, accountLabel, accountIdentifier, baseURL, credentialRef, createdAt
+        case tokenProvenance
     }
 
     public init(from decoder: any Decoder) throws {
@@ -59,5 +77,11 @@ public struct Connection: Codable, Sendable, Identifiable, Hashable {
         credentialRef = try container.decodeIfPresent(String.self, forKey: .credentialRef)
             ?? Self.credentialRef(for: id)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
+        // A connection written before this feature has no provenance field at
+        // all — decode leniently to `.manual` rather than failing the whole
+        // registry load, matching `Project.connectionID` and
+        // `AttachedRepo.owner`'s lenient-decode convention.
+        tokenProvenance = try container.decodeIfPresent(TokenProvenance.self, forKey: .tokenProvenance)
+            ?? .manual
     }
 }

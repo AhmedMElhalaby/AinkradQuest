@@ -37,7 +37,7 @@ public final class ConnectionRegistry {
     @discardableResult
     public func addConnection(provider: ProviderKind, accountLabel: String,
                               accountIdentifier: String, baseURL: URL?,
-                              secret: String) throws -> Connection {
+                              secret: String, tokenProvenance: TokenProvenance = .manual) throws -> Connection {
         // Same account, same provider is a duplicate. The SAME identifier at a
         // DIFFERENT provider is not — one person's email is their login
         // everywhere.
@@ -49,7 +49,8 @@ public final class ConnectionRegistry {
         let connection = Connection(id: UUID(), provider: provider,
                                     accountLabel: accountLabel,
                                     accountIdentifier: accountIdentifier,
-                                    baseURL: baseURL)
+                                    baseURL: baseURL,
+                                    tokenProvenance: tokenProvenance)
         // The secret is written FIRST: a connection whose credential write
         // failed must not be registered, or the UI shows an account that can
         // never authenticate.
