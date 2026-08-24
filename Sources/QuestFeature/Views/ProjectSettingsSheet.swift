@@ -188,6 +188,12 @@ struct ProjectSettingsSheet: View {
         if let current = store.openProject(draft.id)?.project.statusScheme {
             draft.statusScheme = current
         }
+        // ProjectConnectionSection above commits a bind or repo attach directly
+        // through the store, immediately — same hazard as `statusScheme` above,
+        // for the same reason. Refresh `connectionID`/`remoteProjectKey`/`repos`
+        // from the store right before saving, or this write silently reverts a
+        // bind/attach the user just made while the sheet was open.
+        draft = store.mergingLiveConnectionFields(into: draft)
         do {
             try store.updateProject(draft, actor: .user)
             // LAST statement on this path — everything after it would run in an

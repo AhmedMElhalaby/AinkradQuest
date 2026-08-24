@@ -138,6 +138,62 @@ struct ProjectBindingTests {
         #expect(project.repos.isEmpty)
     }
 
+    @Test("a stale draft cannot clobber a bind/repo attach made while the sheet was open")
+    func staleDraftDoesNotClobberLiveConnectionFields() throws {
+        let store = makeStore()
+        let project = store.createProject(name: "Quest", kind: .software, actor: .user)
+        // Snapshot the draft exactly as `ProjectSettingsSheet.init` does, BEFORE
+        // the bind/attach below — this is what the sheet still holds at Save.
+        let staleDraft = project
+
+        let connectionID = UUID()
+        try store.bindProject(project.id, to: connectionID, remoteProjectKey: "QST", actor: .user)
+        try store.attachRepo(AttachedRepo(id: UUID(), connectionID: connectionID,
+                                          owner: "acme", name: "api"),
+                             to: project.id, actor: .user)
+
+        // Mirrors `ProjectSettingsSheet.save()`: merge the live connection
+        // fields into the stale draft right before writing it back, exactly as
+        // `statusScheme` is already refreshed there.
+        var draft = staleDraft
+        draft.name = "Quest Renamed"
+        draft = store.mergingLiveConnectionFields(into: draft)
+        try store.updateProject(draft, actor: .user)
+
+        let saved = try #require(store.openProject(project.id)?.project)
+        #expect(saved.connectionID == connectionID)
+        #expect(saved.remoteProjectKey == "QST")
+        #expect(saved.repos.map(\.slug) == ["acme/api"])
+        #expect(saved.name == "Quest Renamed")
+    }
+
+    @Test("an AttachedRepo carrying an unrecognized extra field still decodes")
+    func attachedRepoToleratesUnknownField() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","connectionID":"\(UUID().uuidString)",
+         "owner":"acme","name":"api","fromTheFuture":"whatever it is"}
+        """
+        let repo = try JSONDecoder().decode(AttachedRepo.self, from: Data(json.utf8))
+        #expect(repo.slug == "acme/api")
+    }
+
+    @Test("a project whose repos array contains an AttachedRepo with an unknown field still loads")
+    func projectToleratesAttachedRepoWithUnknownField() throws {
+        let repoID = UUID()
+        let connectionID = UUID()
+        let json = """
+        {"id":"\(UUID().uuidString)","name":"Legacy","summaryText":"","icon":"folder",
+         "colorToken":"accent","kind":"software","state":"active",
+         "statusScheme":\(String(data: try JSONEncoder().encode(StatusScheme.softwareDefault), encoding: .utf8)!),
+         "links":[],"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z",
+         "repos":[{"id":"\(repoID.uuidString)","connectionID":"\(connectionID.uuidString)",
+                   "owner":"acme","name":"api","fromTheFuture":"whatever it is"}]}
+        """
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let project = try decoder.decode(Project.self, from: Data(json.utf8))
+        #expect(project.repos.map(\.slug) == ["acme/api"])
+    }
+
     @Test("severing clears bindings on live AND trashed projects")
     func severBindings() throws {
         let store = makeStore()
