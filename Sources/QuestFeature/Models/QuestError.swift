@@ -27,6 +27,8 @@ public enum QuestError: Error, Equatable, Sendable {
     case duplicateConnection(String)
     case connectionNotFound(UUID)
     case connectionInUse(UUID, Int)
+    case duplicateRepo(String)
+    case repoNotFound(UUID)
 
     public var message: String {
         switch self {
@@ -61,6 +63,10 @@ public enum QuestError: Error, Equatable, Sendable {
             "No connection with id \(id)."
         case .connectionInUse(_, let count):
             "\(count) project\(count == 1 ? " is" : "s are") still bound to this connection. Unbind them first."
+        case .duplicateRepo(let slug):
+            "\(slug) is already attached to this project on that connection."
+        case .repoNotFound(let id):
+            "No attached repo with id \(id)."
         }
     }
 }
