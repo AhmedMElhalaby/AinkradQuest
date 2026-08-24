@@ -13,12 +13,20 @@ public protocol ProjectRepository: AnyObject {
     /// Throws when the write could not be completed. See `saveIndex`.
     func saveProject(_ document: ProjectDocument) throws
     func removeProject(_ id: UUID)
+    /// Connections live in their own document. The project index is read on
+    /// every launch to draw the sidebar; connections are not needed for that,
+    /// and folding them in would mean decoding credentials-adjacent data for a
+    /// list of project names.
+    func loadConnections() -> [Connection]
+    /// Throws when the write could not be completed. See `saveIndex`.
+    func saveConnections(_ connections: [Connection]) throws
 }
 
 /// Test double. Keeps store tests free of encoding concerns.
 public final class InMemoryProjectRepository: ProjectRepository {
     private var index: [ProjectSummary] = []
     private var documents: [UUID: ProjectDocument] = [:]
+    private var connections: [Connection] = []
 
     public init() {}
 
@@ -27,4 +35,6 @@ public final class InMemoryProjectRepository: ProjectRepository {
     public func loadProject(_ id: UUID) -> ProjectDocument? { documents[id] }
     public func saveProject(_ document: ProjectDocument) { documents[document.project.id] = document }
     public func removeProject(_ id: UUID) { documents.removeValue(forKey: id) }
+    public func loadConnections() -> [Connection] { connections }
+    public func saveConnections(_ connections: [Connection]) { self.connections = connections }
 }

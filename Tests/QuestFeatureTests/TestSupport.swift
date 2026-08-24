@@ -22,6 +22,7 @@ struct SaveFailure: Error {}
 final class FailingSaveProjectRepository: ProjectRepository {
     private var index: [ProjectSummary] = []
     private var documents: [UUID: ProjectDocument] = [:]
+    private var connections: [Connection] = []
     var failSaves = true
 
     func loadIndex() -> [ProjectSummary] { index }
@@ -32,4 +33,9 @@ final class FailingSaveProjectRepository: ProjectRepository {
         documents[document.project.id] = document
     }
     func removeProject(_ id: UUID) { documents.removeValue(forKey: id) }
+    func loadConnections() -> [Connection] { connections }
+    func saveConnections(_ connections: [Connection]) throws {
+        guard !failSaves else { throw SaveFailure() }
+        self.connections = connections
+    }
 }
