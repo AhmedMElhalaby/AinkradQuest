@@ -29,6 +29,19 @@ struct QuestSettingsView: View {
     /// called would run with it.
     @State private var grantRevision = 0
     @State private var error: String?
+    /// Hoisted out of `ConnectionsSettings` (its only writer) so the
+    /// add-connection modal can be presented from THIS view's root instead of
+    /// that section's narrow, offset box — `.ainkradModal` is an overlay that
+    /// renders in the modified view's own bounds, so attaching it to the
+    /// section clipped it off the window's left edge. Same shape as
+    /// `ProjectSettingsSheet` hoisting `pendingSchemePlan` out of
+    /// `StatusSchemeEditor`.
+    @State private var connectionDraft: ConnectionDraft?
+    /// `.ainkradModal` REUSES its content view across a change of the
+    /// presented item — without this key, reopening after Cancel would hand
+    /// the fresh `ConnectionDraft` init argument to a view that kept the
+    /// previous open's stale `@State` draft.
+    @State private var connectionDraftToken = UUID()
 
     init(presentation: any PluginPresentationControl, documents: PluginDocumentStore,
          store: ProjectStore, registry: ConnectionRegistry) {
@@ -58,7 +71,8 @@ struct QuestSettingsView: View {
             // `.ainkradToastHost()`, so errors go to this standing banner
             // rather than a toast.
             ConnectionsSettings(registry: registry, store: store,
-                               report: { message, _ in error = message })
+                               report: { message, _ in error = message },
+                               draft: $connectionDraft, draftToken: $connectionDraftToken)
 
             AinkradSectionFrame(title: "Folder grants") {
                 VStack(alignment: .leading, spacing: AinkradSpacing.md) {
@@ -86,6 +100,20 @@ struct QuestSettingsView: View {
         }
         .padding(AinkradSpacing.lg)
         .onChange(of: mode) { _, newValue in presentation.set(newValue) }
+        // Presented HERE, at the settings root, rather than inside
+        // `ConnectionsSettings` — see `connectionDraft`'s doc comment. This
+        // gives the overlay the full settings surface as its bounds instead
+        // of one section's narrow box, so the editor is centered and
+        // contained rather than clipped off the left edge.
+        .ainkradModal(isPresented: Binding(get: { connectionDraft != nil },
+                                           set: { if !$0 { connectionDraft = nil } })) {
+            if let current = connectionDraft {
+                ConnectionEditor(draft: current, registry: registry,
+                                 report: { message, _ in error = message },
+                                 onClose: { connectionDraft = nil })
+                    .id(connectionDraftToken)
+            }
+        }
     }
 
     private func caption(_ text: String) -> some View {

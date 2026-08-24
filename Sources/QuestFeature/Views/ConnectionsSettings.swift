@@ -51,7 +51,16 @@ public struct ConnectionDraft: Equatable {
 /// provider it speaks to and how many projects are bound to it.
 ///
 /// Presented inside `QuestSettingsView`'s stack, so it renders a
-/// `AinkradSectionFrame` rather than owning a window.
+/// `AinkradSectionFrame` rather than owning a window. The add-connection
+/// editor itself, though, is presented by the PARENT: `.ainkradModal` is an
+/// overlay that renders in the modified view's own bounds, and this view's
+/// bounds are a narrow, offset section box — attaching the modal here (as it
+/// once was) clipped it off the window's left edge. So `draft`/`draftToken`
+/// are hoisted to `QuestSettingsView` via `@Binding`, the same shape
+/// `ProjectSettingsSheet` uses to hoist `pendingSchemePlan` out of
+/// `StatusSchemeEditor`: this view remains the only WRITER of the draft, the
+/// parent only reads it to know what to present, and it presents from its own
+/// full-size root instead.
 struct ConnectionsSettings: View {
     @Bindable var registry: ConnectionRegistry
     let store: ProjectStore
@@ -59,13 +68,12 @@ struct ConnectionsSettings: View {
     /// own error UI, it reports upward.
     let report: (String, AinkradStatus) -> Void
 
-    @State private var draft: ConnectionDraft?
-    /// Bumped every time the editor is (re)opened, and used as the modal's
-    /// `.id(...)`. `.ainkradModal` REUSES its content view across a change of
-    /// the presented item — without a key, reopening after Cancel would hand
-    /// the fresh `ConnectionDraft` init argument to a view that kept the
-    /// previous open's stale `@State` draft.
-    @State private var draftToken = UUID()
+    /// The pending add-connection draft, and its `.id(...)` token — both
+    /// owned in shape (written only here) but stored at the parent so the
+    /// parent can present the editor from its own root. See the type-level
+    /// doc comment above for why.
+    @Binding var draft: ConnectionDraft?
+    @Binding var draftToken: UUID
     /// The connection awaiting an irreversible delete — one piece of state,
     /// matching `TrashView.pendingPurge`, so two confirm dialogs can never be
     /// up at once. Deleting a HEALTHY, unbound connection destroys its
@@ -89,17 +97,6 @@ struct ConnectionsSettings: View {
                     draftToken = UUID()
                     draft = ConnectionDraft(provider: .linear)
                 }
-            }
-        }
-        // `.ainkradModal` is an overlay modifier with no intrinsic
-        // `DismissAction` — closing is this view's own job via `onClose`,
-        // exactly as `ProjectSettingsSheet`/`ItemEditor` do.
-        .ainkradModal(isPresented: Binding(get: { draft != nil },
-                                           set: { if !$0 { draft = nil } })) {
-            if let current = draft {
-                ConnectionEditor(draft: current, registry: registry, report: report,
-                                 onClose: { draft = nil })
-                    .id(draftToken)
             }
         }
         // Attached at this view's root, matching `TrashView`: the kit dims
