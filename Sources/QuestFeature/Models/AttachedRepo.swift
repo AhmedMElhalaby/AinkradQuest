@@ -25,4 +25,25 @@ public struct AttachedRepo: Codable, Sendable, Identifiable, Hashable {
         self.name = name
         self.localPath = localPath
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, connectionID, owner, name, localPath
+    }
+
+    /// Leniently decoded, matching `Project.init(from:)` and
+    /// `ProjectSummary.init(from:)`: synthesized `Codable` would THROW on any
+    /// unfamiliar field rather than degrade, and `Project.init(from:)` decodes
+    /// `repos` with `decodeIfPresent([AttachedRepo].self, forKey: .repos)` —
+    /// which only returns nil when the KEY is absent, not when an ELEMENT
+    /// inside the array fails to decode. So the first field ever added to this
+    /// type would take the whole project document unreadable, not just the
+    /// repo list.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        connectionID = try container.decode(UUID.self, forKey: .connectionID)
+        owner = try container.decodeIfPresent(String.self, forKey: .owner) ?? ""
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        localPath = try container.decodeIfPresent(String.self, forKey: .localPath)
+    }
 }
