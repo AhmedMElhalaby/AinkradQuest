@@ -48,7 +48,7 @@ final class DeleteFailingCredentialStore: CredentialStore, @unchecked Sendable {
     private var storage: [String: String] = [:]
     func secret(forRef ref: String) -> String? { storage[ref] }
     func setSecret(_ secret: String?, forRef ref: String) throws {
-        guard let secret else { throw CredentialError.keychain(errSecIO) }
+        guard let secret else { throw CredentialError.keychain(.delete, errSecIO) }
         storage[ref] = secret
     }
 }

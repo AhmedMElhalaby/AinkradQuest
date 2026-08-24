@@ -33,7 +33,7 @@ public final class KeychainCredentialStore: CredentialStore, @unchecked Sendable
             // Deleting something that was never there is the caller's
             // intended end state, not a failure.
             guard status == errSecSuccess || status == errSecItemNotFound else {
-                throw CredentialError.keychain(status)
+                throw CredentialError.keychain(.delete, status)
             }
             return
         }
@@ -44,9 +44,9 @@ public final class KeychainCredentialStore: CredentialStore, @unchecked Sendable
             var insert = existing
             insert[kSecValueData as String] = data
             let addStatus = SecItemAdd(insert as CFDictionary, nil)
-            guard addStatus == errSecSuccess else { throw CredentialError.keychain(addStatus) }
+            guard addStatus == errSecSuccess else { throw CredentialError.keychain(.save, addStatus) }
             return
         }
-        guard status == errSecSuccess else { throw CredentialError.keychain(status) }
+        guard status == errSecSuccess else { throw CredentialError.keychain(.save, status) }
     }
 }

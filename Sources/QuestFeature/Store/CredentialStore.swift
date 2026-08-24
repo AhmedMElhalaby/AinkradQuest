@@ -1,7 +1,16 @@
 import Foundation
 
 public enum CredentialError: Error, Equatable, LocalizedError {
-    case keychain(OSStatus)
+    /// Which Keychain operation failed, so `message` can name it accurately.
+    /// `ConnectionRegistry.removeConnection` composes this into a larger
+    /// sentence about a failed DELETE — a `save`-worded message there produced
+    /// a self-contradictory "…could not be deleted…: Could not save…".
+    public enum Operation: Equatable {
+        case save
+        case delete
+    }
+
+    case keychain(Operation, OSStatus)
 
     /// Written to be read by a person, matching `QuestError.message`'s style —
     /// otherwise a Keychain failure reaches the user as Foundation's generic
@@ -10,8 +19,9 @@ public enum CredentialError: Error, Equatable, LocalizedError {
     /// story.
     public var message: String {
         switch self {
-        case .keychain(let status):
-            "Could not save the token to the Keychain (status \(status)). "
+        case .keychain(let operation, let status):
+            let verb = operation == .save ? "save" : "delete"
+            return "Could not \(verb) the token in the Keychain (status \(status)). "
                 + "Try again, or check Keychain Access for a conflicting entry."
         }
     }

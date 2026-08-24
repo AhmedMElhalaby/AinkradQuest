@@ -21,10 +21,43 @@ struct CredentialStoreTests {
 
     @Test("a keychain failure's message is not Foundation's generic localizedDescription string")
     func keychainErrorHasAReadableMessage() {
-        let error = CredentialError.keychain(-25291) // errSecNotAvailable
+        let error = CredentialError.keychain(.save, -25291) // errSecNotAvailable
         #expect(error.message.contains("-25291"))
         #expect(!error.message.contains("couldn't be completed"))
         #expect((error as any Error).localizedDescription == error.message)
+    }
+
+    @Test("a save failure's message says save, not delete")
+    func saveFailureMessageSaysSave() {
+        let error = CredentialError.keychain(.save, -25291)
+        #expect(error.message.contains("save"))
+        #expect(!error.message.contains("delete"))
+    }
+
+    @Test("a delete failure's message says delete, not save")
+    func deleteFailureMessageSaysDelete() {
+        let error = CredentialError.keychain(.delete, -25291)
+        #expect(error.message.contains("delete"))
+        #expect(!error.message.contains("save"))
+    }
+
+    @MainActor
+    @Test("removeConnection's composed message on a failed Keychain delete does not say save")
+    func removeConnectionComposedMessageDoesNotSaySave() throws {
+        let repository = FailingSaveProjectRepository()
+        repository.failSaves = false
+        let credentials = DeleteFailingCredentialStore()
+        let registry = ConnectionRegistry(repository: repository, credentials: credentials)
+        let connection = try registry.addConnection(provider: .jira, accountLabel: "Acme",
+                                                     accountIdentifier: "acme@example.com",
+                                                     baseURL: nil, secret: "token")
+        try registry.removeConnection(connection.id, boundProjectCount: 0)
+        let message = try #require(registry.persistenceFailure)
+        #expect(message.contains("could not be deleted"))
+        // Not a plain `contains("save")`: the surrounding sentence legitimately
+        // says "saved token" — it's the CredentialError's own verb that must
+        // not say "save" on a delete failure.
+        #expect(!message.contains("Could not save"))
     }
 
     @Test("refs are isolated from one another")
