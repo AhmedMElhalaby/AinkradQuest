@@ -79,8 +79,28 @@ public final class ConnectionRegistry {
         }
         let connection = connections[index]
         connections.remove(at: index)
-        try? credentials.setSecret(nil, forRef: connection.credentialRef)
+        // The connection is gone from the registry either way — a failed
+        // secret deletion must not block removal, only be reported. Silently
+        // swallowing it was deliberate before Task 7's confirm dialog, which
+        // now promises the user "its saved token will be deleted"
+        // (`ConnectionsSettings.swift`): a swallowed failure would make the
+        // app assert a destruction that did not happen, while the token sits
+        // in the login keychain.
+        var secretDeletionFailure: String?
+        do {
+            try credentials.setSecret(nil, forRef: connection.credentialRef)
+        } catch {
+            let message = (error as? CredentialError)?.message ?? error.localizedDescription
+            secretDeletionFailure = "\(connection.accountLabel) was removed, but its saved token "
+                + "could not be deleted from the Keychain: \(message)"
+        }
         persist()
+        // `persist()` may have just cleared `persistenceFailure` on a
+        // successful save, which would otherwise clobber the token-deletion
+        // failure above — surface that one whenever the save itself succeeded.
+        if let secretDeletionFailure, persistenceFailure == nil {
+            persistenceFailure = secretDeletionFailure
+        }
     }
 
     private func persist() {
@@ -88,7 +108,10 @@ public final class ConnectionRegistry {
             try repository.saveConnections(connections)
             persistenceFailure = nil
         } catch {
-            persistenceFailure = "Connections could not be saved: \((error as? QuestError)?.message ?? error.localizedDescription)"
+            let message = (error as? QuestError)?.message
+                ?? (error as? CredentialError)?.message
+                ?? error.localizedDescription
+            persistenceFailure = "Connections could not be saved: \(message)"
         }
     }
 }

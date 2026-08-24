@@ -255,6 +255,8 @@ struct ConnectionEditor: View {
             onClose()
         } catch let failure as QuestError {
             report(failure.message, .danger)
+        } catch let failure as CredentialError {
+            report(failure.message, .danger)
         } catch {
             report(error.localizedDescription, .danger)
         }

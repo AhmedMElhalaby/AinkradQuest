@@ -1,7 +1,24 @@
 import Foundation
 
-public enum CredentialError: Error, Equatable {
+public enum CredentialError: Error, Equatable, LocalizedError {
     case keychain(OSStatus)
+
+    /// Written to be read by a person, matching `QuestError.message`'s style —
+    /// otherwise a Keychain failure reaches the user as Foundation's generic
+    /// "The operation couldn't be completed. (QuestFeature.CredentialError
+    /// error 0.)", for the single most important failure in the credential
+    /// story.
+    public var message: String {
+        switch self {
+        case .keychain(let status):
+            "Could not save the token to the Keychain (status \(status)). "
+                + "Try again, or check Keychain Access for a conflicting entry."
+        }
+    }
+
+    /// `LocalizedError` conformance routes through the same text, so any call
+    /// site that only knows `Error.localizedDescription` still gets it.
+    public var errorDescription: String? { message }
 }
 
 /// The seam that keeps secrets out of documents. Everything above it — the
