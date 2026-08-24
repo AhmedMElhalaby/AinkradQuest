@@ -38,8 +38,11 @@ public final class LocalProvider: WorkProvider {
     }
 
     private func resolve(_ key: String) throws -> Project {
-        guard let id = UUID(uuidString: key), let project = store.openProject(id)?.project else {
-            throw QuestError.projectNotFound(UUID(uuidString: key) ?? UUID())
+        guard let id = UUID(uuidString: key) else {
+            throw QuestError.malformedProjectKey(key)
+        }
+        guard let project = store.openProject(id)?.project else {
+            throw QuestError.projectNotFound(id)
         }
         return project
     }

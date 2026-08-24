@@ -30,6 +30,11 @@ public enum QuestError: Error, Equatable, Sendable {
     case duplicateRepo(String)
     case repoNotFound(UUID)
     case localWriteMustUseStore
+    /// A provider key that is not even shaped like a valid id for this
+    /// provider — distinct from `projectNotFound`, which names a real id that
+    /// does not resolve. Reusing `projectNotFound` here would have to
+    /// fabricate an id, naming something that never existed.
+    case malformedProjectKey(String)
 
     public var message: String {
         switch self {
@@ -70,6 +75,8 @@ public enum QuestError: Error, Equatable, Sendable {
             "No attached repo with id \(id)."
         case .localWriteMustUseStore:
             "Local writes go through ProjectStore, not the provider seam."
+        case .malformedProjectKey(let key):
+            "'\(key)' is not a valid local project key (expected a UUID)."
         }
     }
 }

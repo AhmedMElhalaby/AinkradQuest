@@ -45,4 +45,13 @@ struct LocalProviderTests {
             try await provider.statuses(forProjectKey: UUID().uuidString)
         }
     }
+
+    @Test("a malformed project key names itself in the error, not a fabricated random id")
+    func malformedProjectKeyNamesTheActualBadKey() async {
+        let provider = LocalProvider(store: makeStore())
+        let badKey = "not-a-uuid"
+        await #expect(throws: QuestError.malformedProjectKey(badKey)) {
+            try await provider.statuses(forProjectKey: badKey)
+        }
+    }
 }
