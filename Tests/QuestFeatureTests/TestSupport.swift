@@ -22,6 +22,7 @@ struct SaveFailure: Error {}
 final class FailingSaveProjectRepository: ProjectRepository {
     private var index: [ProjectSummary] = []
     private var documents: [UUID: ProjectDocument] = [:]
+    private var connections: [Connection] = []
     var failSaves = true
 
     func loadIndex() -> [ProjectSummary] { index }
@@ -32,4 +33,22 @@ final class FailingSaveProjectRepository: ProjectRepository {
         documents[document.project.id] = document
     }
     func removeProject(_ id: UUID) { documents.removeValue(forKey: id) }
+    func loadConnections() -> [Connection] { connections }
+    func saveConnections(_ connections: [Connection]) throws {
+        guard !failSaves else { throw SaveFailure() }
+        self.connections = connections
+    }
+}
+
+/// A `CredentialStore` whose `setSecret` throws on every deletion (a `nil`
+/// secret), so tests can verify a failed Keychain delete surfaces rather than
+/// being swallowed. Non-deletion writes still succeed, matching
+/// `FailingSaveProjectRepository`'s "only the write under test fails" shape.
+final class DeleteFailingCredentialStore: CredentialStore, @unchecked Sendable {
+    private var storage: [String: String] = [:]
+    func secret(forRef ref: String) -> String? { storage[ref] }
+    func setSecret(_ secret: String?, forRef ref: String) throws {
+        guard let secret else { throw CredentialError.keychain(.delete, errSecIO) }
+        storage[ref] = secret
+    }
 }

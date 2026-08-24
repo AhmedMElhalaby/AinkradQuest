@@ -48,4 +48,18 @@ public final class DocumentProjectRepository: ProjectRepository {
     public func removeProject(_ id: UUID) {
         documents.setData(nil, forKey: Self.projectKey(id))
     }
+
+    static let connectionsKey = "connection-index"
+
+    public func loadConnections() -> [Connection] {
+        guard let data = documents.data(forKey: Self.connectionsKey),
+              let connections = try? decoder.decode([Connection].self, from: data)
+        else { return [] }
+        return connections
+    }
+
+    public func saveConnections(_ connections: [Connection]) throws {
+        let data = try encoder.encode(connections)
+        documents.setData(data, forKey: Self.connectionsKey)
+    }
 }

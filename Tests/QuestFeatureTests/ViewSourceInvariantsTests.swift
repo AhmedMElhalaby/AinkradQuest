@@ -77,6 +77,59 @@ struct ViewSourceInvariantsTests {
         }
     }
 
+    /// Trap: `draft` in `ProjectSettingsSheet` is an init-time snapshot, but
+    /// `ProjectConnectionSection` commits a bind or repo attach immediately
+    /// through the store, not through `draft`. Without refreshing `draft`'s
+    /// `connectionID`/`remoteProjectKey`/`repos` from the store right before
+    /// `updateProject` writes it, Save silently reverts the user's bind and
+    /// repo attachments — a data-loss blocker that shipped and passed every
+    /// other test in this suite. `mergingLiveConnectionFields` is the fix;
+    /// nothing else pins its call site, so deleting the call leaves all other
+    /// tests green.
+    @Test("ProjectSettingsSheet's save path merges live connection fields before writing")
+    func saveMergesLiveConnectionFields() throws {
+        let found = try ViewSource.load().first { $0.name == "ProjectSettingsSheet.swift" }
+        let file = try #require(found, "ProjectSettingsSheet.swift not found in \(ViewSource.viewsDirectory.path)")
+        #expect(file.contains("mergingLiveConnectionFields"), """
+            ProjectSettingsSheet.swift no longer calls `mergingLiveConnectionFields` on its \
+            save path. `draft` is an init-time snapshot, but `ProjectConnectionSection` commits a \
+            bind or repo attach immediately through the store — without this merge, Save silently \
+            reverts the user's connectionID/remoteProjectKey/repos to their value when the sheet \
+            was opened.
+            """)
+    }
+
+    /// Trap: `ConnectionsSettings` is a SECTION (`AinkradSectionFrame`) sitting
+    /// inside `QuestSettingsView`'s stack, not a window or a full-size root.
+    /// `.ainkradModal` renders in the MODIFIED VIEW'S OWN BOUNDS — attaching
+    /// it to `ConnectionsSettings` itself scoped the overlay to that narrow,
+    /// offset section box, clipping the add-connection editor off the
+    /// window's left edge. This shipped and passed every other test in this
+    /// suite; nothing else pins the modal to the settings root, so
+    /// re-attaching `.ainkradModal` inside `ConnectionsSettings.swift` would
+    /// reintroduce the clip with all other tests still green.
+    @Test("the add-connection modal stays presented from the settings root, not the section")
+    func connectionModalIsPresentedFromSettingsRoot() throws {
+        let sectionFile = try #require(
+            try ViewSource.load().first { $0.name == "ConnectionsSettings.swift" },
+            "ConnectionsSettings.swift not found in \(ViewSource.viewsDirectory.path)")
+        #expect(!sectionFile.contains(".ainkradModal("), """
+            ConnectionsSettings.swift presents `.ainkradModal` itself again. That view renders as \
+            an `AinkradSectionFrame` inside `QuestSettingsView`'s stack — a narrow, offset box, not \
+            a window — so the overlay would be clipped off the left edge as it was before this fix. \
+            Keep the draft's presentation hoisted to `QuestSettingsView` via the `@Binding` \
+            `draft`/`draftToken`, as `ProjectSettingsSheet` hoists `pendingSchemePlan`.
+            """)
+
+        let rootFile = try #require(
+            try ViewSource.load().first { $0.name == "QuestSettingsView.swift" },
+            "QuestSettingsView.swift not found in \(ViewSource.viewsDirectory.path)")
+        #expect(rootFile.contains(".ainkradModal("), """
+            QuestSettingsView.swift no longer presents the add-connection modal from the settings \
+            root — without it the editor has nowhere full-size to render from.
+            """)
+    }
+
     /// Trap: `AinkradButton` carries NO keyboard shortcut — in the whole kit
     /// only `AinkradModal`/`AinkradDrawer` bind keys. Migrating off SwiftUI's
     /// `Button` therefore drops every `.defaultAction` silently. This is the

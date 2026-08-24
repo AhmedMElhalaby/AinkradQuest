@@ -12,6 +12,7 @@ import AinkradAppKit
 /// `QuestShellContent` therefore lives inside the host, not around it.
 public struct QuestShell: View {
     let store: ProjectStore
+    let registry: ConnectionRegistry
     /// Part of the host `PluginLoader`'s entry-point signature and kept for it.
     /// No view below reads it any more: after Task 13 every surface resolves
     /// colour from `\.ainkradTheme`/`\.ainkradStatusColors`, which the host
@@ -19,14 +20,16 @@ public struct QuestShell: View {
     let theme: HostTheme
     let documents: PluginDocumentStore
 
-    public init(store: ProjectStore, theme: HostTheme, documents: PluginDocumentStore) {
+    public init(store: ProjectStore, registry: ConnectionRegistry, theme: HostTheme,
+               documents: PluginDocumentStore) {
         self.store = store
+        self.registry = registry
         self.theme = theme
         self.documents = documents
     }
 
     public var body: some View {
-        QuestShellContent(store: store, documents: documents)
+        QuestShellContent(store: store, registry: registry, documents: documents)
             .ainkradToastHost()
     }
 }
@@ -60,6 +63,7 @@ extension EnvironmentValues {
 /// `\.ainkradTheme`/`\.ainkradStatusColors`, which the host injects.
 struct QuestShellContent: View {
     @Bindable var store: ProjectStore
+    let registry: ConnectionRegistry
     let documents: PluginDocumentStore
 
     @State private var surface: QuestSurface = .landing
@@ -207,7 +211,7 @@ struct QuestShellContent: View {
         .ainkradModal(isPresented: Binding(get: { settingsProject != nil },
                                            set: { if !$0 { settingsProject = nil } })) {
             if let id = settingsProject, let project = store.openProject(id)?.project {
-                ProjectSettingsSheet(store: store, project: project,
+                ProjectSettingsSheet(store: store, registry: registry, project: project,
                                      report: { report($0, status: $1) },
                                      onClose: { settingsProject = nil })
                     .id(project.id)
