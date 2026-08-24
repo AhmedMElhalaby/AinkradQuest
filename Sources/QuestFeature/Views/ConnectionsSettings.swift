@@ -66,6 +66,13 @@ struct ConnectionsSettings: View {
     /// the fresh `ConnectionDraft` init argument to a view that kept the
     /// previous open's stale `@State` draft.
     @State private var draftToken = UUID()
+    /// The connection awaiting an irreversible delete — one piece of state,
+    /// matching `TrashView.pendingPurge`, so two confirm dialogs can never be
+    /// up at once. Deleting a HEALTHY, unbound connection destroys its
+    /// Keychain secret on the spot; the in-use guard below only protects the
+    /// bound case, so this is the only thing standing between one click and
+    /// a token the user has to re-enter from scratch.
+    @State private var pendingRemoval: Connection?
 
     @Environment(\.ainkradTheme) private var theme
 
@@ -95,6 +102,23 @@ struct ConnectionsSettings: View {
                     .id(draftToken)
             }
         }
+        // Attached at this view's root, matching `TrashView`: the kit dims
+        // and centres the dialog within the view it modifies, so an inner
+        // attachment (e.g. on a single row) would scope the scrim to that row.
+        .ainkradConfirmDialog(isPresented: Binding(get: { pendingRemoval != nil },
+                                                   set: { if !$0 { pendingRemoval = nil } }),
+                              title: "Remove connection?",
+                              message: pendingRemoval.map {
+                                  "“\($0.accountLabel)” and its saved token will be deleted. "
+                                      + "You will need to re-enter the token to reconnect. This cannot be undone."
+                              } ?? "",
+                              confirmTitle: "Remove",
+                              isDestructive: true) {
+            if let connection = pendingRemoval {
+                performRemoval(connection)
+            }
+            pendingRemoval = nil
+        }
     }
 
     private func row(_ connection: Connection) -> some View {
@@ -102,12 +126,19 @@ struct ConnectionsSettings: View {
         return AinkradFormRow(title: connection.accountLabel,
                               help: "\(connection.provider.rawValue) · \(connection.accountIdentifier) · \(bound) project\(bound == 1 ? "" : "s")") {
             AinkradButton(title: "Remove", style: .secondary) {
-                remove(connection, bound: bound)
+                // Opens the confirm dialog rather than removing directly: a
+                // healthy, unbound connection's Keychain secret would
+                // otherwise be destroyed on a single click, with no way back
+                // short of re-entering the token from scratch. The in-use
+                // guard inside `performRemoval` still runs after confirming —
+                // this step is additional, not a replacement for it.
+                pendingRemoval = connection
             }
         }
     }
 
-    private func remove(_ connection: Connection, bound: Int) {
+    private func performRemoval(_ connection: Connection) {
+        let bound = store.projectCount(boundTo: connection.id)
         do {
             try registry.removeConnection(connection.id, boundProjectCount: bound)
             // The guard above only counts LIVE projects, deliberately: a
