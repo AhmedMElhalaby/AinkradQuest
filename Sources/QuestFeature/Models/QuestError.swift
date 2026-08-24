@@ -24,6 +24,9 @@ public enum QuestError: Error, Equatable, Sendable {
     /// The item equivalent. Same reasoning: a purge that would accept a live
     /// item is one mis-passed id away from destroying work nobody deleted.
     case itemNotInTrash(UUID)
+    case duplicateConnection(String)
+    case connectionNotFound(UUID)
+    case connectionInUse(UUID, Int)
 
     public var message: String {
         switch self {
@@ -52,6 +55,12 @@ public enum QuestError: Error, Equatable, Sendable {
             "Project \(id) is not in the trash, so there is nothing to delete permanently."
         case .itemNotInTrash(let id):
             "Work item \(id) is not in the trash, so there is nothing to delete permanently."
+        case .duplicateConnection(let identifier):
+            "An account named \(identifier) is already connected to this provider."
+        case .connectionNotFound(let id):
+            "No connection with id \(id)."
+        case .connectionInUse(_, let count):
+            "\(count) project\(count == 1 ? " is" : "s are") still bound to this connection. Unbind them first."
         }
     }
 }
