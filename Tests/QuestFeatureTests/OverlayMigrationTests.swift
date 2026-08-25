@@ -211,4 +211,31 @@ struct OverlayMigrationTests {
         // fixed) will retry rather than skipping forever.
         #expect(!overlay.hubConfig().hasMigratedRepos(projectID))
     }
+
+    /// Finding 3's whole point: `.blocked` must reach a PERSON, not just the
+    /// type system. `ProjectStore.init` is the only production call site
+    /// (it runs the migration once per launch over every live/trashed
+    /// project) — this drives that real path end to end, with no direct call
+    /// to `migrateIfNeeded`, and checks the store's own user-visible banner.
+    @Test("a blocked migration surfaces on ProjectStore.persistenceFailure, which QuestShell already renders")
+    func blockedMigrationSurfacesToProjectStore() throws {
+        let documents = MemoryDocumentStore()
+        let repository = DocumentProjectRepository(documents: documents)
+        let projectID = UUID(), connectionID = UUID()
+        documents.setData(try legacyDocument(projectID: projectID, connectionID: connectionID),
+                          forKey: "project-\(projectID.uuidString)")
+        documents.setData(Data("not json".utf8), forKey: "overlay-project-\(projectID.uuidString)")
+        // `ProjectStore.init` reads the INDEX to know which projects exist —
+        // a project document alone is not enough to be picked up.
+        let summary = ProjectSummary(id: projectID, name: "Legacy", icon: "folder",
+                                     colorToken: "accent", kind: .software, state: .active,
+                                     updatedAt: Date())
+        try repository.saveIndex([summary])
+        let overlay = OverlayStore(repository: repository)
+
+        let store = ProjectStore(repository: repository, overlay: overlay)
+
+        let failure = try #require(store.persistenceFailure)
+        #expect(failure.contains("1"))
+    }
 }

@@ -66,8 +66,27 @@ public final class ProjectStore {
         // runs on every open, on the UI hot path). Trashed projects matter
         // too: `severBindings` reaches them, so their bindings must exist to
         // be severed even if they are never opened again before that happens.
-        for id in (live + trashed).map(\.id) {
-            OverlayMigration.migrateIfNeeded(projectID: id, repository: repository, overlay: overlay)
+        //
+        // `.blocked` outcomes are collected rather than discarded: a corrupt
+        // overlay means a project's repos silently never arrive, and that
+        // must reach a person, not just the type system. Reused
+        // `persistenceFailure` (rather than a distinct property) because it
+        // is already the store's one user-visible "something needs your
+        // attention" banner, already rendered by `QuestShell` — a second,
+        // migration-specific property would just be a second place a view
+        // has to remember to check.
+        let blockedCount = (live + trashed)
+            .map(\.id)
+            .reduce(into: 0) { count, id in
+                if OverlayMigration.migrateIfNeeded(projectID: id, repository: repository,
+                                                    overlay: overlay) == .blocked {
+                    count += 1
+                }
+            }
+        if blockedCount > 0 {
+            let plural = blockedCount == 1 ? "project's" : "projects'"
+            persistenceFailure = "\(blockedCount) \(plural) repos could not finish migrating: "
+                + "their overlay could not be read. Restore or remove the corrupt overlay to complete the move."
         }
     }
 
