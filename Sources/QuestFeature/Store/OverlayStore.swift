@@ -79,10 +79,17 @@ public final class OverlayStore {
         return unreadableProjects.contains(projectID)
     }
 
-    public func update(projectID: UUID, _ mutate: (inout ProjectOverlay) -> Void) {
+    /// Returns whether the mutation was durably persisted, so a caller that
+    /// must not proceed on a half-landed write (like `OverlayMigration`,
+    /// which sets a "this is done" marker in a SEPARATE document right after
+    /// this call) can tell success from a swallowed failure. Most callers
+    /// don't need this — `persistenceFailure` already surfaces it to the
+    /// user — so the result is discardable.
+    @discardableResult
+    public func update(projectID: UUID, _ mutate: (inout ProjectOverlay) -> Void) -> Bool {
         var overlay = overlay(for: projectID)
         mutate(&overlay)
-        commit(overlay)
+        return commit(overlay)
     }
 
     public func updateItem(_ itemID: UUID, in projectID: UUID,
@@ -123,25 +130,29 @@ public final class OverlayStore {
     /// silently look like a success, so it still bumps `revision` (in-memory
     /// state — the blocked attempt itself — did change) and raises
     /// `persistenceFailure`, but never reaches the repository.
-    private func commit(_ overlay: ProjectOverlay) {
+    @discardableResult
+    private func commit(_ overlay: ProjectOverlay) -> Bool {
         guard !unreadableProjects.contains(overlay.projectID) else {
             revision += 1
             persistenceFailure = "This project's overlay could not be read, so the change "
                 + "was not saved. Restore or remove the corrupt overlay before editing it again."
-            return
+            return false
         }
         overlays[overlay.projectID] = overlay
-        persist { try repository.saveOverlay(overlay) }
+        return persist { try repository.saveOverlay(overlay) }
     }
 
-    private func persist(_ write: () throws -> Void) {
+    @discardableResult
+    private func persist(_ write: () throws -> Void) -> Bool {
         revision += 1
         do {
             try write()
             persistenceFailure = nil
+            return true
         } catch {
             persistenceFailure = "Your notes and priorities could not be saved: "
                 + ((error as? QuestError)?.message ?? error.localizedDescription)
+            return false
         }
     }
 }

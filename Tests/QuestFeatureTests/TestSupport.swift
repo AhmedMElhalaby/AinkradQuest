@@ -38,6 +38,11 @@ final class FailingSaveProjectRepository: ProjectRepository {
     private var linkMap = LinkMap()
     private var hubConfig = HubConfig()
     var failSaves = true
+    /// Fails ONLY `saveOverlay`, independent of `failSaves` — lets a test set
+    /// up the exact interleaving where the overlay write fails but the
+    /// hub-config write (used right after it, e.g. by `OverlayMigration`)
+    /// still succeeds.
+    var failOverlaySaves = false
 
     func loadIndex() -> [ProjectSummary] { index }
     func saveIndex(_ summaries: [ProjectSummary]) { index = summaries }
@@ -55,7 +60,7 @@ final class FailingSaveProjectRepository: ProjectRepository {
 
     func loadOverlay(_ projectID: UUID) throws -> ProjectOverlay? { overlays[projectID] }
     func saveOverlay(_ overlay: ProjectOverlay) throws {
-        guard !failSaves else { throw SaveFailure() }
+        guard !failSaves, !failOverlaySaves else { throw SaveFailure() }
         overlays[overlay.projectID] = overlay
     }
     func removeOverlay(_ projectID: UUID) { overlays.removeValue(forKey: projectID) }

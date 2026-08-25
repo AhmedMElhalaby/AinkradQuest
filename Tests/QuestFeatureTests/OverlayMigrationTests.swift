@@ -217,6 +217,53 @@ struct OverlayMigrationTests {
     /// (it runs the migration once per launch over every live/trashed
     /// project) — this drives that real path end to end, with no direct call
     /// to `migrateIfNeeded`, and checks the store's own user-visible banner.
+    /// The finding this fix closes: the repos half writes the overlay THEN
+    /// the hub-config marker, as two separate document saves. If the overlay
+    /// save fails but the hub-config save succeeds, the marker would (before
+    /// the fix) record "repos migrated" for data that never reached disk —
+    /// and since the marker is what gates a retry, it would never be retried
+    /// and the repos would be gone from the UI forever. Reproduces exactly
+    /// that interleaving with `FailingSaveProjectRepository.failOverlaySaves`,
+    /// which fails ONLY the overlay write while leaving the hub-config write
+    /// (and everything else) succeeding.
+    @Test("an overlay write that fails to persist does not mark repos migrated, and retries next launch")
+    func overlayWriteFailureDoesNotMarkReposMigrated() throws {
+        let repository = FailingSaveProjectRepository()
+        repository.failSaves = false
+        let projectID = UUID(), connectionID = UUID()
+        let document = ProjectDocument(project: Project(
+            id: projectID, name: "Legacy", kind: .software,
+            connectionID: connectionID, remoteProjectKey: "QST",
+            repos: [AttachedRepo(id: UUID(), connectionID: connectionID, owner: "acme", name: "api")]))
+        try repository.saveProject(document)
+        let overlay = OverlayStore(repository: repository)
+
+        // The overlay write fails; the hub-config write (binding half, and
+        // the repos-half marker if the bug were present) still succeeds.
+        repository.failOverlaySaves = true
+
+        let outcome = OverlayMigration.migrateIfNeeded(projectID: projectID,
+                                                       repository: repository, overlay: overlay)
+
+        #expect(outcome == .incomplete)
+        // The marker must NOT be set — this is the bug this test guards
+        // against. If it were set here, the repos would be silently and
+        // permanently lost even though they never left the legacy document.
+        #expect(!overlay.hubConfig().hasMigratedRepos(projectID))
+        // The binding half is unaffected (separate document, separate save)
+        // and still completes.
+        #expect(overlay.hubConfig().binding(for: projectID)?.remoteProjectKey == "QST")
+
+        // A later launch — overlay writes working again — must retry the
+        // repos half rather than treating it as already done.
+        repository.failOverlaySaves = false
+        let retryOutcome = OverlayMigration.migrateIfNeeded(projectID: projectID,
+                                                            repository: repository, overlay: overlay)
+        #expect(retryOutcome == .moved)
+        #expect(overlay.overlay(for: projectID).repos.map(\.slug) == ["acme/api"])
+        #expect(overlay.hubConfig().hasMigratedRepos(projectID))
+    }
+
     @Test("a blocked migration surfaces on ProjectStore.persistenceFailure, which QuestShell already renders")
     func blockedMigrationSurfacesToProjectStore() throws {
         let documents = MemoryDocumentStore()

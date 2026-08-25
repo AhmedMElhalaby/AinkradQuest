@@ -25,6 +25,13 @@ public enum OverlayMigration {
         /// the write. Nothing was marked done for that half, so it retries
         /// on the next launch once the overlay is restored or removed.
         case blocked
+        /// The repos half attempted its overlay write — the overlay was
+        /// readable, so this is NOT `blocked` — but the write did not
+        /// durably persist (a genuine save failure, surfaced separately via
+        /// `OverlayStore.persistenceFailure`). The marker was deliberately
+        /// left unset, so the move retries on the next launch rather than
+        /// being recorded as done for data that never reached disk.
+        case incomplete
     }
 
     /// Returns what happened, so a caller can log or count — `moved`,
@@ -38,6 +45,7 @@ public enum OverlayMigration {
         let project = document.project
         var moved = false
         var blocked = false
+        var incomplete = false
 
         let config = overlay.hubConfig()
         if !project.legacyRepos.isEmpty, !config.hasMigratedRepos(projectID) {
@@ -48,9 +56,19 @@ public enum OverlayMigration {
                 // untouched either way, so nothing is lost in the meantime.
                 blocked = true
             } else {
-                overlay.update(projectID: projectID) { $0.repos = project.legacyRepos }
-                overlay.updateHubConfig { $0.markReposMigrated(projectID) }
-                moved = true
+                let persisted = overlay.update(projectID: projectID) { $0.repos = project.legacyRepos }
+                if persisted {
+                    // Only mark the repos half done once the overlay write is
+                    // CONFIRMED durably saved. Setting the marker before this
+                    // is exactly the bug this guards against: the hub-config
+                    // write below is a SEPARATE document, so if the overlay
+                    // write above failed but we marked anyway, the marker
+                    // would forever claim repos that never reached disk.
+                    overlay.updateHubConfig { $0.markReposMigrated(projectID) }
+                    moved = true
+                } else {
+                    incomplete = true
+                }
             }
         }
 
@@ -66,6 +84,7 @@ public enum OverlayMigration {
         }
 
         if blocked { return .blocked }
+        if incomplete { return .incomplete }
         return moved ? .moved : .nothingToDo
     }
 }
