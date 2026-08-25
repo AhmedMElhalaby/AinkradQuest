@@ -63,6 +63,23 @@ public struct QuestApp: AinkradApp {
         }
     }
 
+    /// Cached per host, the same shape as `stores`/`registries`: it holds
+    /// `lastSnapshotAt`/`lastError`, standing state the settings view must
+    /// read and mutate through the same instance, not a fresh one reloaded
+    /// on every settings open.
+    @MainActor private static let snapshotStores = PluginInstanceStorage<SnapshotStore>()
+
+    @MainActor private static func snapshotStore(for host: HostServices) -> SnapshotStore {
+        snapshotStores.value(for: instance(of: host)) {
+            let projectStore = store(for: host)
+            return SnapshotStore(overlay: overlay(for: host), documents: host.documents,
+                                 projectIDs: { [weak projectStore] in
+                                     guard let projectStore else { return [] }
+                                     return (projectStore.projects + projectStore.trashedProjects).map(\.id)
+                                 })
+        }
+    }
+
     public static func makeRootView(host: HostServices) -> AnyView {
         AnyView(QuestShell(store: store(for: host), registry: registry(for: host),
                           theme: host.theme, documents: host.documents))
@@ -70,7 +87,8 @@ public struct QuestApp: AinkradApp {
 
     public static func makeSettingsView(host: HostServices) -> AnyView {
         AnyView(QuestSettingsView(presentation: host.presentation, documents: host.documents,
-                                  store: store(for: host), registry: registry(for: host)))
+                                  store: store(for: host), registry: registry(for: host),
+                                  snapshots: snapshotStore(for: host)))
     }
 
     public static func chromeFill(host: HostServices) -> Color? {
@@ -114,6 +132,7 @@ extension QuestApp: AinkradAppTeardown {
         stores.remove(instance)
         overlays.remove(instance)
         registries.remove(instance)
+        snapshotStores.remove(instance)
         // The MCP server's tool closures capture the operations layer, which
         // captures this instance's store. Leaving it registered would let the
         // assistant keep driving an app the user shut.

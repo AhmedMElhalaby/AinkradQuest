@@ -231,10 +231,11 @@ struct OverlayMigrationTests {
         let repository = FailingSaveProjectRepository()
         repository.failSaves = false
         let projectID = UUID(), connectionID = UUID()
-        let document = ProjectDocument(project: Project(
-            id: projectID, name: "Legacy", kind: .software,
-            connectionID: connectionID, remoteProjectKey: "QST",
-            repos: [AttachedRepo(id: UUID(), connectionID: connectionID, owner: "acme", name: "api")]))
+        var legacyProject = Project(id: projectID, name: "Legacy", kind: .software)
+        legacyProject.legacyConnectionID = connectionID
+        legacyProject.legacyRemoteProjectKey = "QST"
+        legacyProject.legacyRepos = [AttachedRepo(id: UUID(), connectionID: connectionID, owner: "acme", name: "api")]
+        let document = ProjectDocument(project: legacyProject)
         try repository.saveProject(document)
         let overlay = OverlayStore(repository: repository)
 

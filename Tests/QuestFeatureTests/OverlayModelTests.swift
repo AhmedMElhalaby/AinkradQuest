@@ -59,6 +59,17 @@ struct OverlayModelTests {
         #expect(decoded.personalOrder == nil)
     }
 
+    @Test("a hand-written time entry with no note still loads")
+    func lenientTimeEntryDecoding() throws {
+        let (_, decoder) = makeCoders()
+        let json = """
+        {"id":"\(UUID().uuidString)","minutes":30,"spentOn":"2026-08-25T00:00:00Z"}
+        """
+        let decoded = try decoder.decode(TimeEntry.self, from: Data(json.utf8))
+        #expect(decoded.note.isEmpty)
+        #expect(decoded.minutes == 30)
+    }
+
     @Test("an empty item overlay knows it is empty, a used one does not")
     func emptiness() {
         #expect(ItemOverlay().isEmpty)

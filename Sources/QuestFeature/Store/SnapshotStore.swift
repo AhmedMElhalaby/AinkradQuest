@@ -16,6 +16,29 @@ public struct SnapshotFile: Identifiable, Sendable, Equatable {
     }
 }
 
+/// One entry in the restore list: a snapshot file that decoded cleanly, or
+/// one that is present but unreadable.
+///
+/// `listSnapshots()` used to silently drop a file it could not decode — which
+/// is exactly wrong here: the user reaches this list precisely because
+/// something has already gone wrong, and a backup they believe exists
+/// vanishing from the UI with no trace is its own failure mode. A damaged
+/// entry carries only what is knowable without decoding it (its filename) and
+/// is never offerable to `restore(from:)`, which still takes a `SnapshotFile`.
+public enum SnapshotEntry: Identifiable, Sendable, Equatable {
+    case readable(SnapshotFile)
+    /// `url` for identity/display, `filename` for the message — kept
+    /// separate so a caller never has to re-derive the name from the URL.
+    case damaged(url: URL, filename: String)
+
+    public var id: URL {
+        switch self {
+        case .readable(let file): file.url
+        case .damaged(let url, _): url
+        }
+    }
+}
+
 /// Builds, writes, lists and restores overlay snapshots.
 ///
 /// Every filesystem call goes inside `FolderBookmark.withAccess`, which balances
@@ -47,6 +70,17 @@ public final class SnapshotStore {
     /// in this module, so internal is sufficient and honest.
     func vaultGrant() -> FolderBookmark.Grant {
         FolderBookmark.grant(forKey: FolderBookmark.vaultRootKey, in: documents)
+    }
+
+    /// Saves a newly chosen vault root. Same "internal, `FolderBookmark` stays
+    /// hidden" reasoning as `vaultGrant()` — the settings view picks a folder
+    /// but never touches `FolderBookmark` or `documents` directly.
+    func saveVaultGrant(_ url: URL) throws {
+        try FolderBookmark.save(url, forKey: FolderBookmark.vaultRootKey, in: documents)
+    }
+
+    func clearVaultGrant() {
+        FolderBookmark.clear(forKey: FolderBookmark.vaultRootKey, in: documents)
     }
 
     /// Collects every project's overlay plus the link map and the migration
@@ -108,24 +142,33 @@ public final class SnapshotStore {
         return true
     }
 
-    public func listSnapshots() -> [SnapshotFile] {
+    public func listSnapshots() -> [SnapshotEntry] {
         FolderBookmark.withAccess(forKey: FolderBookmark.vaultRootKey,
-                                  in: documents) { root -> [SnapshotFile] in
+                                  in: documents) { root -> [SnapshotEntry] in
             let directory = root.appendingPathComponent(SnapshotWriter.directoryName,
                                                         isDirectory: true)
             let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
             let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-            return names
+            let entries: [(entry: SnapshotEntry, sortKey: Date)] = names
                 .filter { $0.hasPrefix("quest-overlay-") && $0.hasSuffix(".json") }
-                .compactMap { name -> SnapshotFile? in
+                .map { name -> (SnapshotEntry, Date) in
                     let url = directory.appendingPathComponent(name)
                     guard let data = try? Data(contentsOf: url),
                           let snapshot = try? decoder.decode(OverlaySnapshot.self, from: data)
-                    else { return nil }
-                    return SnapshotFile(url: url, takenAt: snapshot.takenAt,
-                                        projectCount: snapshot.overlays.count)
+                    else {
+                        // No `takenAt` to sort by — a damaged file's mtime is
+                        // the best available proxy, so it still lands roughly
+                        // in place rather than always sorting to one end.
+                        let modified = ((try? FileManager.default
+                            .attributesOfItem(atPath: url.path))?[.modificationDate] as? Date)
+                            ?? Date.distantPast
+                        return (.damaged(url: url, filename: name), modified)
+                    }
+                    let file = SnapshotFile(url: url, takenAt: snapshot.takenAt,
+                                            projectCount: snapshot.overlays.count)
+                    return (.readable(file), snapshot.takenAt)
                 }
-                .sorted { $0.takenAt > $1.takenAt }
+            return entries.sorted { $0.sortKey > $1.sortKey }.map(\.entry)
         } ?? []
     }
 

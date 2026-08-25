@@ -18,6 +18,7 @@ struct QuestSettingsView: View {
     let documents: PluginDocumentStore
     @Bindable var store: ProjectStore
     @Bindable var registry: ConnectionRegistry
+    @Bindable var snapshots: SnapshotStore
 
     @Environment(\.ainkradTheme) private var theme
     @Environment(\.ainkradTypography) private var typo
@@ -42,13 +43,21 @@ struct QuestSettingsView: View {
     /// the fresh `ConnectionDraft` init argument to a view that kept the
     /// previous open's stale `@State` draft.
     @State private var connectionDraftToken = UUID()
+    /// The backup awaiting a confirmed restore, and its failure message —
+    /// hoisted out of `BackupSettings` (its only writer) the same way
+    /// `connectionDraft` is hoisted out of `ConnectionsSettings`, so the
+    /// confirm dialog presents from this root rather than one of
+    /// `BackupSettings`' two inner `AinkradSectionFrame` boxes.
+    @State private var pendingRestore: SnapshotFile?
+    @State private var restoreError: String?
 
     init(presentation: any PluginPresentationControl, documents: PluginDocumentStore,
-         store: ProjectStore, registry: ConnectionRegistry) {
+         store: ProjectStore, registry: ConnectionRegistry, snapshots: SnapshotStore) {
         self.presentation = presentation
         self.documents = documents
         self.store = store
         self.registry = registry
+        self.snapshots = snapshots
         _mode = State(initialValue: presentation.current)
     }
 
@@ -73,6 +82,9 @@ struct QuestSettingsView: View {
             ConnectionsSettings(registry: registry, store: store,
                                report: { message, _ in error = message },
                                draft: $connectionDraft, draftToken: $connectionDraftToken)
+
+            BackupSettings(snapshots: snapshots, pendingRestore: $pendingRestore,
+                           restoreError: $restoreError)
 
             AinkradSectionFrame(title: "Folder grants") {
                 VStack(alignment: .leading, spacing: AinkradSpacing.md) {
@@ -113,6 +125,38 @@ struct QuestSettingsView: View {
                                  onClose: { connectionDraft = nil })
                     .id(connectionDraftToken)
             }
+        }
+        // Restore is the most destructive action Quest offers — it replaces
+        // the live overlay with the snapshot's — so it gets a confirm dialog,
+        // hoisted to this root for the same reason `connectionDraft`'s modal
+        // is: `.ainkradConfirmDialog`/`.ainkradModal` render in the MODIFIED
+        // view's own bounds, and `BackupSettings`' two `AinkradSectionFrame`
+        // boxes are narrow, offset boxes, not this window.
+        .ainkradConfirmDialog(isPresented: Binding(get: { pendingRestore != nil },
+                                                   set: { if !$0 { pendingRestore = nil } }),
+                              title: "Restore this backup?",
+                              message: pendingRestore.map {
+                                  "This replaces your current notes, personal priority and time entries "
+                                      + "with the backup from \(SnapshotAge.describe($0.takenAt)). "
+                                      + "Anything changed since then will be lost. This cannot be undone."
+                              } ?? "",
+                              confirmTitle: "Restore",
+                              isDestructive: true) {
+            if let file = pendingRestore {
+                performRestore(file)
+            }
+            pendingRestore = nil
+        }
+    }
+
+    private func performRestore(_ file: SnapshotFile) {
+        do {
+            try snapshots.restore(from: file)
+            restoreError = nil
+        } catch let failure as SnapshotError {
+            restoreError = failure.message
+        } catch {
+            restoreError = error.localizedDescription
         }
     }
 

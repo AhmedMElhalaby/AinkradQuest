@@ -14,6 +14,18 @@ public struct TimeEntry: Codable, Sendable, Hashable, Identifiable {
         self.spentOn = spentOn
         self.note = note
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, minutes, spentOn, note
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        minutes = try container.decode(Int.self, forKey: .minutes)
+        spentOn = try container.decode(Date.self, forKey: .spentOn)
+        note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
+    }
 }
 
 /// A Claude Code session attached to a work item.

@@ -27,9 +27,7 @@ public struct Project: Codable, Sendable, Identifiable, Hashable {
                 summaryText: String = "", icon: String = "folder",
                 colorToken: String = "accent", state: ProjectState = .active,
                 statusScheme: StatusScheme? = nil, links: [Link] = [],
-                createdAt: Date = Date(), updatedAt: Date = Date(), archivedAt: Date? = nil,
-                connectionID: UUID? = nil, remoteProjectKey: String? = nil,
-                repos: [AttachedRepo] = []) {
+                createdAt: Date = Date(), updatedAt: Date = Date(), archivedAt: Date? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
@@ -42,9 +40,9 @@ public struct Project: Codable, Sendable, Identifiable, Hashable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.archivedAt = archivedAt
-        self.legacyConnectionID = connectionID
-        self.legacyRemoteProjectKey = remoteProjectKey
-        self.legacyRepos = repos
+        self.legacyConnectionID = nil
+        self.legacyRemoteProjectKey = nil
+        self.legacyRepos = []
     }
 
     public var summary: ProjectSummary {

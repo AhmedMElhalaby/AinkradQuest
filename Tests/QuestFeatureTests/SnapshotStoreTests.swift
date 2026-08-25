@@ -131,4 +131,53 @@ struct SnapshotStoreTests {
         #expect(overlay.hubConfig().binding(for: projectID)?.remoteProjectKey == "LIVE")
         #expect(overlay.hubConfig().hasMigratedRepos(projectID))
     }
+
+    @Test("a directory with one good snapshot and one garbage file lists both, one restorable one damaged")
+    func listingSurfacesDamagedSnapshots() throws {
+        let documents = MemoryDocumentStore()
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("quest-snap-list-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        do {
+            try FolderBookmark.save(folder, forKey: FolderBookmark.vaultRootKey, in: documents)
+        } catch {
+            // Same sandbox caveat as `FolderBookmarkTests.roundTrip`.
+            withKnownIssue("""
+                Cannot exercise real security-scoped bookmarks in this test \
+                environment: \(error).
+                """) {
+                throw error
+            }
+            return
+        }
+
+        let snapshotsDir = folder.appendingPathComponent(SnapshotWriter.directoryName, isDirectory: true)
+        try FileManager.default.createDirectory(at: snapshotsDir, withIntermediateDirectories: true)
+
+        let good = OverlaySnapshot(takenAt: Date(timeIntervalSince1970: 1_756_000_000),
+                                   overlays: [], linkMap: LinkMap(),
+                                   migratedRepoProjects: [], migratedBindingProjects: [])
+        try SnapshotWriter.write(good, into: snapshotsDir)
+
+        let garbageName = "quest-overlay-2026-01-01-000000-zzzz.json"
+        try Data("not valid json at all".utf8)
+            .write(to: snapshotsDir.appendingPathComponent(garbageName))
+
+        let store = SnapshotStore(overlay: makeOverlay(), documents: documents, projectIDs: { [] })
+        let entries = store.listSnapshots()
+
+        #expect(entries.count == 2)
+        let readable = entries.compactMap { entry -> SnapshotFile? in
+            if case .readable(let file) = entry { return file }
+            return nil
+        }
+        let damaged = entries.compactMap { entry -> String? in
+            if case .damaged(_, let filename) = entry { return filename }
+            return nil
+        }
+        #expect(readable.count == 1)
+        #expect(damaged == [garbageName])
+    }
 }

@@ -1,0 +1,206 @@
+import SwiftUI
+import Foundation
+import AinkradAppKit
+
+/// Describes how stale the last backup is, in words a person reads at a
+/// glance rather than a raw timestamp. A backup that stopped weeks ago is the
+/// exact failure this whole surface exists to catch, so a stale age reads as
+/// a problem to act on, not a neutral fact.
+enum SnapshotAge {
+    private static let staleThreshold: TimeInterval = 60 * 60 * 24 * 7
+
+    static func describe(_ date: Date?, now: Date = Date()) -> String {
+        guard let date else { return "Never backed up" }
+        let elapsed = now.timeIntervalSince(date)
+        if elapsed >= staleThreshold {
+            let days = Int(elapsed / (60 * 60 * 24))
+            return "Backed up \(days) day\(days == 1 ? "" : "s") ago — this looks stale, check your vault folder"
+        }
+        if elapsed < 60 {
+            return "Backed up just now"
+        }
+        if elapsed < 60 * 60 {
+            let minutes = Int(elapsed / 60)
+            return "Backed up \(minutes) minute\(minutes == 1 ? "" : "s") ago"
+        }
+        if elapsed < 60 * 60 * 24 {
+            let hours = Int(elapsed / (60 * 60))
+            return "Backed up \(hours) hour\(hours == 1 ? "" : "s") ago"
+        }
+        let days = Int(elapsed / (60 * 60 * 24))
+        return "Backed up \(days) day\(days == 1 ? "" : "s") ago"
+    }
+}
+
+/// Backup status and restore surface: the grant state (with all three cases
+/// distinguished — see `FolderBookmark.Grant`), the last-snapshot age, a
+/// manual "Back up now", and the restore list.
+///
+/// Restore is the most destructive action Quest offers — it replaces the live
+/// overlay with the snapshot's, by design — so it gets the same confirm-dialog
+/// treatment as removing a connection. Unlike `ConnectionsSettings`' own
+/// delete confirm (which is fine attached at ITS root — the clipping bug is
+/// specific to `.ainkradModal`, a full editor), this one is hoisted one level
+/// further, to `QuestSettingsView`'s own root, via `pendingRestore`/
+/// `restoreError` — the same `@Binding` shape `QuestSettingsView` uses to
+/// hoist `connectionDraft` out of `ConnectionsSettings`. `BackupSettings`
+/// itself never presents `.ainkradConfirmDialog`.
+struct BackupSettings: View {
+    @Bindable var snapshots: SnapshotStore
+    /// The snapshot awaiting a confirmed restore, owned by `QuestSettingsView`
+    /// so its confirm dialog can be presented from the settings root.
+    @Binding var pendingRestore: SnapshotFile?
+    @Binding var restoreError: String?
+
+    @Environment(\.ainkradTheme) private var theme
+    @Environment(\.ainkradTypography) private var typo
+    @Environment(\.ainkradStatusColors) private var statusColors
+
+    /// Bumped after Choose…/Back up now/restore so the grant and the restore
+    /// list are re-read. Same shape as `QuestSettingsView.grantRevision`.
+    @State private var revision = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AinkradSpacing.md) {
+            AinkradSectionFrame(title: "Backups") {
+                VStack(alignment: .leading, spacing: AinkradSpacing.md) {
+                    caption("Your notes, personal priority and time entries — the things a re-sync can never rebuild — are backed up to your vault folder.")
+
+                    grantRow
+
+                    AinkradFormRow(title: "Last backup", help: SnapshotAge.describe(snapshots.lastSnapshotAt)) {
+                        AinkradButton(title: "Back up now", style: .secondary) { backUpNow() }
+                    }
+
+                    if let failure = snapshots.lastError {
+                        AinkradBanner(message: failure, status: .danger)
+                    }
+                }
+            }
+
+            AinkradSectionFrame(title: "Restore") {
+                VStack(alignment: .leading, spacing: AinkradSpacing.md) {
+                    let entries = snapshots.listSnapshots()
+                    if entries.isEmpty {
+                        caption("No backups yet.")
+                    } else {
+                        ForEach(entries) { entry in
+                            restoreRow(entry)
+                        }
+                    }
+
+                    if let restoreError {
+                        AinkradBanner(message: restoreError, status: .danger) { self.restoreError = nil }
+                    }
+                }
+            }
+        }
+        // No `.ainkradConfirmDialog` here — see the type doc comment. Restoring
+        // still bumps `revision` after `QuestSettingsView` applies it, via
+        // `onChange` below.
+        .onChange(of: pendingRestore) { old, new in
+            // Fires once the confirm dialog (owned by the parent) resolves
+            // `pendingRestore` back to nil after a restore — re-read the
+            // grant/list/age so the UI reflects what just happened.
+            if old != nil && new == nil { revision += 1 }
+        }
+    }
+
+    // MARK: - Grant state
+
+    private var grantRow: some View {
+        _ = revision
+        let grant = snapshots.vaultGrant()
+        return AinkradFormRow(title: "Vault folder", help: grantHelp(grant)) {
+            HStack(spacing: AinkradSpacing.sm) {
+                VStack(alignment: .leading, spacing: AinkradSpacing.xs) {
+                    Text(grantPathText(grant))
+                        .font(AinkradFontResolver.font(.mono, typography: typo))
+                        .foregroundStyle(theme.foreground.opacity(0.8))
+                        .lineLimit(1).truncationMode(.middle)
+                    if case .unresolvable = grant {
+                        // Must never read as "not configured" — the user
+                        // granted a folder and backups have silently
+                        // stopped, which is a very different problem from
+                        // never having set one up.
+                        Text("This folder can no longer be found — it was moved, renamed, or deleted. Backups have STOPPED. Choose it again to resume.")
+                            .font(.caption)
+                            .foregroundStyle(statusColors.warning)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                AinkradButton(title: "Choose…", style: .secondary) { pickVaultFolder() }
+            }
+        }
+    }
+
+    /// This is the DEFAULT state on a fresh install, not an edge case — most
+    /// users will read this before ever granting anything, so it must say
+    /// plainly that backups are off and how to turn them on.
+    private func grantHelp(_ grant: FolderBookmark.Grant) -> String {
+        switch grant {
+        case .notGranted:
+            "Backups are off. Choose a vault folder to start backing up your notes and priorities."
+        case .granted:
+            "Backups are written here, keeping the last \(SnapshotWriter.keep)."
+        case .unresolvable:
+            "Backups have stopped because this folder can no longer be found."
+        }
+    }
+
+    private func grantPathText(_ grant: FolderBookmark.Grant) -> String {
+        switch grant {
+        case .notGranted: "Not set — backups are off"
+        case .granted(let path): path
+        case .unresolvable(let path): path ?? "Previously granted folder"
+        }
+    }
+
+    // MARK: - Restore list
+
+    private func restoreRow(_ entry: SnapshotEntry) -> some View {
+        switch entry {
+        case .readable(let file):
+            return AnyView(AinkradFormRow(title: SnapshotAge.describe(file.takenAt),
+                                          help: "\(file.projectCount) project\(file.projectCount == 1 ? "" : "s")") {
+                AinkradButton(title: "Restore…", style: .secondary) { pendingRestore = file }
+            })
+        case .damaged(_, let filename):
+            return AnyView(AinkradFormRow(title: filename,
+                                          help: "This backup is damaged and cannot be restored.") {
+                Text("Damaged")
+                    .font(.caption)
+                    .foregroundStyle(statusColors.danger)
+            })
+        }
+    }
+
+    // MARK: - Actions
+
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .font(AinkradFontResolver.font(.body, typography: typo))
+            .foregroundStyle(theme.foreground.opacity(0.75))
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func backUpNow() {
+        _ = snapshots.snapshotNow()
+        revision += 1
+    }
+
+    private func pickVaultFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try snapshots.saveVaultGrant(url)
+            revision += 1
+            restoreError = nil
+        } catch {
+            restoreError = "Could not save that folder: \(error.localizedDescription)"
+        }
+    }
+}
