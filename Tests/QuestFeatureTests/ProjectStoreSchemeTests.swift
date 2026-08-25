@@ -6,7 +6,7 @@ import Foundation
 @Suite("ProjectStore — scheme")
 struct ProjectStoreSchemeTests {
     private func makeStore() -> (ProjectStore, Project) {
-        let store = ProjectStore(repository: InMemoryProjectRepository())
+        let store = makeProjectStore(InMemoryProjectRepository())
         return (store, store.createProject(name: "Quest", kind: .software, actor: .user))
     }
 
@@ -87,12 +87,12 @@ struct ProjectStoreSchemeTests {
     @Test("the change survives a relaunch")
     func persists() throws {
         let repository = InMemoryProjectRepository()
-        let store = ProjectStore(repository: repository)
+        let store = makeProjectStore(repository)
         let project = store.createProject(name: "Q", kind: .software, actor: .user)
         let plan = try #require(planRemovingReview(store, project))
         try store.applyScheme(plan, to: project.id, actor: .user)
 
-        let reopened = ProjectStore(repository: repository)
+        let reopened = makeProjectStore(repository)
         #expect(reopened.openProject(project.id)?.project.statusScheme.status(id: "in_review") == nil)
     }
 

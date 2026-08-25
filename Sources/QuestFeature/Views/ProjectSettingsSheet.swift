@@ -43,6 +43,32 @@ enum ProjectSettingsValidation {
     }
 }
 
+/// What `ProjectSettingsSheet.save()` actually writes, pulled out so a test
+/// can drive the SAME code the sheet calls rather than a hand-mirrored copy
+/// of it — the same reason `ProjectSettingsValidation` above is a free
+/// function instead of inline logic in `save()`.
+///
+/// Starts from the LIVE project (not the sheet's stale `draft`) and overlays
+/// only the fields this sheet's controls actually own — Name, Summary, Icon,
+/// Colour, Kind. Everything else on `live` (`links`, `state`, `archivedAt`,
+/// `statusScheme`, and anything added to `Project` later) passes through
+/// untouched, so nothing this sheet doesn't own can ever be reverted by a
+/// stale `draft`, no matter what changed elsewhere while the sheet was open.
+enum ProjectSettingsSheetWrite {
+    static func apply(draft: Project, colorToken: ProjectColorToken, validatedName: String,
+                      to live: Project) -> Project {
+        var live = live
+        live.name = validatedName
+        // Genuinely owned by this sheet alone — nothing else writes it, so
+        // last-writer-wins here is fine.
+        live.summaryText = draft.summaryText
+        live.icon = draft.icon
+        live.colorToken = colorToken.rawValue
+        live.kind = draft.kind
+        return live
+    }
+}
+
 /// Name, summary, icon and colour. Draft-until-Save, like ItemEditor.
 ///
 /// Presented through `.ainkradModal`, which is an OVERLAY modifier and injects
@@ -170,32 +196,40 @@ struct ProjectSettingsSheet: View {
             report("Apply or cancel the status changes first.", .warning)
             return
         }
-        var draft = draft
+        let name: String
         switch ProjectSettingsValidation.validate(name: draft.name) {
         case .invalid(let message):
             report(message, .danger)
             return
-        case .valid(let name):
-            draft.name = name
+        case .valid(let validated):
+            name = validated
         }
-        draft.colorToken = colorToken.rawValue
-        // StatusSchemeEditor above applies scheme changes directly through the
-        // store on "Apply", immediately — unlike the rest of this sheet, which
-        // is draft-until-Save. `draft.statusScheme` is stale from init time, so
-        // pull the store's current copy right before saving, exactly as
-        // ItemEditor.save() does for links: otherwise this write would silently
-        // revert a scheme change the user already applied and confirmed.
-        if let current = store.openProject(draft.id)?.project.statusScheme {
-            draft.statusScheme = current
+        // This sheet's `draft` is an init-time snapshot, and things other than
+        // this sheet write to a project while it is open: `StatusSchemeEditor`
+        // applies scheme changes immediately on "Apply", `ProjectConnectionSection`
+        // commits binds/attaches immediately through `store.overlay`, and —
+        // less obviously, but just as real — an MCP caller (e.g. `add_link`)
+        // can add a link or change `state` at any moment while this sheet sits
+        // open, with no view here to reflect it. A live bug shipped from
+        // exactly this: `save()` used to write the WHOLE stale `draft` back,
+        // silently reverting whatever any of those had just done.
+        //
+        // The fix is structural rather than enumerating fields to refresh:
+        // start from the LIVE document and apply only what THIS sheet actually
+        // owns — Name, Summary, Icon, Colour, Kind, the fields its own
+        // controls edit. Everything else (`links`, `state`, `archivedAt`,
+        // `statusScheme`, and anything added to `Project` later) is read from
+        // the live copy and never carried on `draft`, so it cannot be
+        // reverted by this save no matter what changed elsewhere while the
+        // sheet was open.
+        guard let live = store.openProject(draft.id)?.project else {
+            report(QuestError.projectNotFound(draft.id).message, .danger)
+            return
         }
-        // ProjectConnectionSection above commits a bind or repo attach directly
-        // through the store, immediately — same hazard as `statusScheme` above,
-        // for the same reason. Refresh `connectionID`/`remoteProjectKey`/`repos`
-        // from the store right before saving, or this write silently reverts a
-        // bind/attach the user just made while the sheet was open.
-        draft = store.mergingLiveConnectionFields(into: draft)
+        let toSave = ProjectSettingsSheetWrite.apply(draft: draft, colorToken: colorToken,
+                                                     validatedName: name, to: live)
         do {
-            try store.updateProject(draft, actor: .user)
+            try store.updateProject(toSave, actor: .user)
             // LAST statement on this path — everything after it would run in an
             // unmounted subtree.
             onClose()

@@ -5,7 +5,7 @@ import Foundation
 @MainActor
 @Suite("ProjectStore — projects")
 struct ProjectStoreProjectTests {
-    private func makeStore() -> ProjectStore { ProjectStore(repository: InMemoryProjectRepository()) }
+    private func makeStore() -> ProjectStore { makeProjectStore(InMemoryProjectRepository()) }
 
     @Test("creating a project indexes it and logs the creation")
     func create() {
@@ -72,12 +72,12 @@ struct ProjectStoreProjectTests {
     @Test("a soft-deleted project stays trashed across a relaunch")
     func trashSurvivesRelaunch() throws {
         let repository = InMemoryProjectRepository()
-        let store = ProjectStore(repository: repository)
+        let store = makeProjectStore(repository)
         let project = store.createProject(name: "Persisted Oops", kind: .general, actor: .agent)
 
         try store.deleteProject(project.id, actor: .agent)
 
-        let relaunched = ProjectStore(repository: repository)
+        let relaunched = makeProjectStore(repository)
         #expect(relaunched.projects.isEmpty)
         #expect(relaunched.trashedProjects.map(\.name) == ["Persisted Oops"])
 
@@ -88,13 +88,13 @@ struct ProjectStoreProjectTests {
     @Test("a trashed project survives unrelated commits after a relaunch")
     func trashSurvivesUnrelatedCommitsAfterRelaunch() throws {
         let repository = InMemoryProjectRepository()
-        let store = ProjectStore(repository: repository)
+        let store = makeProjectStore(repository)
         let trashed = store.createProject(name: "Trashed A", kind: .general, actor: .user)
         let other = store.createProject(name: "Live B", kind: .general, actor: .user)
         try store.deleteProject(trashed.id, actor: .user)
 
         // Relaunch: nothing is open, everything comes from the index.
-        let relaunched = ProjectStore(repository: repository)
+        let relaunched = makeProjectStore(repository)
         #expect(relaunched.trashedProjects.map(\.name) == ["Trashed A"])
 
         // An unrelated write must not evict the trashed project from memory…
@@ -104,9 +104,9 @@ struct ProjectStoreProjectTests {
         #expect(relaunched.trashedProjects.map(\.name) == ["Trashed A"])
 
         // …nor from the index on disk, even after several more relaunches.
-        let again = ProjectStore(repository: repository)
+        let again = makeProjectStore(repository)
         try again.updateProject(renamed, actor: .user)
-        let third = ProjectStore(repository: repository)
+        let third = makeProjectStore(repository)
         #expect(third.trashedProjects.map(\.name) == ["Trashed A"])
         #expect(third.projects.map(\.name) == ["Live B renamed"])
         #expect(repository.loadIndex().count == 2)
@@ -120,7 +120,7 @@ struct ProjectStoreProjectTests {
     func persistenceFailureOnExistingProject() throws {
         let repository = FailingSaveProjectRepository()
         repository.failSaves = false
-        let store = ProjectStore(repository: repository)
+        let store = makeProjectStore(repository)
         var project = store.createProject(name: "Saved", kind: .general, actor: .user)
         #expect(store.persistenceFailure == nil)
 
@@ -140,7 +140,7 @@ struct ProjectStoreProjectTests {
     @Test("a failed save keeps the in-memory change and surfaces persistenceFailure")
     func persistenceFailureSurfaces() {
         let repository = FailingSaveProjectRepository()
-        let store = ProjectStore(repository: repository)
+        let store = makeProjectStore(repository)
 
         let project = store.createProject(name: "Unsaved", kind: .general, actor: .user)
 
@@ -155,7 +155,7 @@ struct ProjectStoreProjectTests {
 
     @Test("a project can be paused and appears only in the paused list")
     func pause() throws {
-        let store = ProjectStore(repository: InMemoryProjectRepository())
+        let store = makeProjectStore(InMemoryProjectRepository())
         let project = store.createProject(name: "Later", kind: .general, actor: .user)
 
         try store.setState(project.id, state: .paused, actor: .user)
@@ -168,7 +168,7 @@ struct ProjectStoreProjectTests {
 
     @Test("state changes are logged with the actor")
     func stateLogged() throws {
-        let store = ProjectStore(repository: InMemoryProjectRepository())
+        let store = makeProjectStore(InMemoryProjectRepository())
         let project = store.createProject(name: "P", kind: .general, actor: .user)
 
         try store.setState(project.id, state: .archived, actor: .agent)
@@ -182,17 +182,17 @@ struct ProjectStoreProjectTests {
     @Test("state survives a relaunch")
     func statePersists() throws {
         let repository = InMemoryProjectRepository()
-        let store = ProjectStore(repository: repository)
+        let store = makeProjectStore(repository)
         let project = store.createProject(name: "P", kind: .general, actor: .user)
         try store.setState(project.id, state: .paused, actor: .user)
 
-        let reopened = ProjectStore(repository: repository)
+        let reopened = makeProjectStore(repository)
         #expect(reopened.pausedProjects.map(\.name) == ["P"])
     }
 
     @Test("setting a project back to active clears an archive stamp")
     func reactivate() throws {
-        let store = ProjectStore(repository: InMemoryProjectRepository())
+        let store = makeProjectStore(InMemoryProjectRepository())
         let project = store.createProject(name: "P", kind: .general, actor: .user)
         try store.setState(project.id, state: .archived, actor: .user)
 
@@ -207,7 +207,7 @@ struct ProjectStoreProjectTests {
     @Test("purging a trashed project removes it from the trash and from disk")
     func purge() throws {
         let repository = InMemoryProjectRepository()
-        let store = ProjectStore(repository: repository)
+        let store = makeProjectStore(repository)
         let project = store.createProject(name: "Legacy", kind: .general, actor: .user)
         try store.deleteProject(project.id, actor: .user)
 
@@ -222,7 +222,7 @@ struct ProjectStoreProjectTests {
         #expect(store.projects.isEmpty)
         #expect(store.openProject(project.id) == nil)
 
-        let relaunched = ProjectStore(repository: repository)
+        let relaunched = makeProjectStore(repository)
         #expect(relaunched.trashedProjects.isEmpty)
         #expect(relaunched.projects.isEmpty)
     }

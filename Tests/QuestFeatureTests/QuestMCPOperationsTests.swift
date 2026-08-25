@@ -6,7 +6,7 @@ import Foundation
 @Suite("QuestMCPOperations")
 struct QuestMCPOperationsTests {
     private func makeSubject() -> (QuestMCPOperations, ProjectStore) {
-        let store = ProjectStore(repository: InMemoryProjectRepository())
+        let store = makeProjectStore(InMemoryProjectRepository())
         return (QuestMCPOperations(store: store), store)
     }
 

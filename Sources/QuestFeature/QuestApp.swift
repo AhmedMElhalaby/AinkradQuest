@@ -30,9 +30,23 @@ public struct QuestApp: AinkradApp {
     }
     @MainActor private static var legacyIDs: [ObjectIdentifier: PluginInstanceID] = [:]
 
+    /// Cached per host, the same shape as `stores`: this MUST be the single
+    /// `OverlayStore` instance for the host's repository. `ProjectStore` no
+    /// longer builds its own — a second instance over the same repository
+    /// would be a second in-memory cache and a second `HubConfig` copy, with
+    /// writes through one invisible to the other until reload.
+    @MainActor private static let overlays = PluginInstanceStorage<OverlayStore>()
+
+    @MainActor private static func overlay(for host: HostServices) -> OverlayStore {
+        overlays.value(for: instance(of: host)) {
+            OverlayStore(repository: DocumentProjectRepository(documents: host.documents))
+        }
+    }
+
     @MainActor private static func store(for host: HostServices) -> ProjectStore {
         stores.value(for: instance(of: host)) {
-            ProjectStore(repository: DocumentProjectRepository(documents: host.documents))
+            ProjectStore(repository: DocumentProjectRepository(documents: host.documents),
+                         overlay: overlay(for: host))
         }
     }
 
@@ -98,6 +112,7 @@ extension QuestApp: AinkradAppMCP {
 extension QuestApp: AinkradAppTeardown {
     public static func teardown(instance: PluginInstanceID) {
         stores.remove(instance)
+        overlays.remove(instance)
         registries.remove(instance)
         // The MCP server's tool closures capture the operations layer, which
         // captures this instance's store. Leaving it registered would let the

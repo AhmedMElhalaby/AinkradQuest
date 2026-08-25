@@ -6,7 +6,7 @@ import Foundation
 @Suite("ProjectStore — items")
 struct ProjectStoreItemTests {
     private func makeStore() -> (ProjectStore, Project) {
-        let store = ProjectStore(repository: InMemoryProjectRepository())
+        let store = makeProjectStore(InMemoryProjectRepository())
         return (store, store.createProject(name: "Quest", kind: .software, actor: .user))
     }
 

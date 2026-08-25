@@ -5,7 +5,7 @@ import Foundation
 @MainActor
 @Suite("LocalProvider")
 struct LocalProviderTests {
-    private func makeStore() -> ProjectStore { ProjectStore(repository: InMemoryProjectRepository()) }
+    private func makeStore() -> ProjectStore { makeProjectStore(InMemoryProjectRepository()) }
 
     @Test("the local provider reports the local kind")
     func kind() {

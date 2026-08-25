@@ -35,6 +35,12 @@ public enum QuestError: Error, Equatable, Sendable {
     /// does not resolve. Reusing `projectNotFound` here would have to
     /// fabricate an id, naming something that never existed.
     case malformedProjectKey(String)
+    /// The overlay document exists but failed to decode. Unlike the index or
+    /// a project document, the overlay is not rebuildable, so this must
+    /// surface rather than read as an empty overlay — reading it as empty
+    /// would let the next save overwrite the corrupt bytes with nothing,
+    /// destroying whatever might have been salvageable by hand.
+    case overlayCorrupt(UUID)
 
     public var message: String {
         switch self {
@@ -77,6 +83,8 @@ public enum QuestError: Error, Equatable, Sendable {
             "Local writes go through ProjectStore, not the provider seam."
         case .malformedProjectKey(let key):
             "'\(key)' is not a valid local project key (expected a UUID)."
+        case .overlayCorrupt(let id):
+            "The overlay for project \(id) could not be read and was not overwritten."
         }
     }
 }

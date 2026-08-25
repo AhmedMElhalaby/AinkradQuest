@@ -2,6 +2,17 @@ import Foundation
 import AinkradAppKit
 @testable import QuestFeature
 
+/// Builds a `ProjectStore` and the `OverlayStore` it needs, both bound to the
+/// SAME repository — the shape `QuestApp` uses in production, now that
+/// `ProjectStore` no longer builds its own `OverlayStore` internally (a
+/// second instance over the same repository would be a second in-memory
+/// cache, invisible to the first until reload). Centralized here so every
+/// test gets that pairing right without repeating it at each call site.
+@MainActor
+func makeProjectStore(_ repository: any ProjectRepository) -> ProjectStore {
+    ProjectStore(repository: repository, overlay: OverlayStore(repository: repository))
+}
+
 /// An in-memory `PluginDocumentStore`, so repository tests exercise the real
 /// encode/decode path without a host.
 final class MemoryDocumentStore: PluginDocumentStore, @unchecked Sendable {
@@ -23,7 +34,15 @@ final class FailingSaveProjectRepository: ProjectRepository {
     private var index: [ProjectSummary] = []
     private var documents: [UUID: ProjectDocument] = [:]
     private var connections: [Connection] = []
+    private var overlays: [UUID: ProjectOverlay] = [:]
+    private var linkMap = LinkMap()
+    private var hubConfig = HubConfig()
     var failSaves = true
+    /// Fails ONLY `saveOverlay`, independent of `failSaves` — lets a test set
+    /// up the exact interleaving where the overlay write fails but the
+    /// hub-config write (used right after it, e.g. by `OverlayMigration`)
+    /// still succeeds.
+    var failOverlaySaves = false
 
     func loadIndex() -> [ProjectSummary] { index }
     func saveIndex(_ summaries: [ProjectSummary]) { index = summaries }
@@ -37,6 +56,23 @@ final class FailingSaveProjectRepository: ProjectRepository {
     func saveConnections(_ connections: [Connection]) throws {
         guard !failSaves else { throw SaveFailure() }
         self.connections = connections
+    }
+
+    func loadOverlay(_ projectID: UUID) throws -> ProjectOverlay? { overlays[projectID] }
+    func saveOverlay(_ overlay: ProjectOverlay) throws {
+        guard !failSaves, !failOverlaySaves else { throw SaveFailure() }
+        overlays[overlay.projectID] = overlay
+    }
+    func removeOverlay(_ projectID: UUID) { overlays.removeValue(forKey: projectID) }
+    func loadLinkMap() -> LinkMap { linkMap }
+    func saveLinkMap(_ map: LinkMap) throws {
+        guard !failSaves else { throw SaveFailure() }
+        linkMap = map
+    }
+    func loadHubConfig() -> HubConfig { hubConfig }
+    func saveHubConfig(_ config: HubConfig) throws {
+        guard !failSaves else { throw SaveFailure() }
+        hubConfig = config
     }
 }
 

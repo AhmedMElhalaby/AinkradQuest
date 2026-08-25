@@ -77,25 +77,41 @@ struct ViewSourceInvariantsTests {
         }
     }
 
-    /// Trap: `draft` in `ProjectSettingsSheet` is an init-time snapshot, but
-    /// `ProjectConnectionSection` commits a bind or repo attach immediately
-    /// through the store, not through `draft`. Without refreshing `draft`'s
-    /// `connectionID`/`remoteProjectKey`/`repos` from the store right before
-    /// `updateProject` writes it, Save silently reverts the user's bind and
-    /// repo attachments — a data-loss blocker that shipped and passed every
-    /// other test in this suite. `mergingLiveConnectionFields` is the fix;
-    /// nothing else pins its call site, so deleting the call leaves all other
-    /// tests green.
-    @Test("ProjectSettingsSheet's save path merges live connection fields before writing")
-    func saveMergesLiveConnectionFields() throws {
+    // A trap this suite used to guard here — "ProjectSettingsSheet's save path
+    // merges live connection fields before writing", pinning a call to
+    // `mergingLiveConnectionFields` — is OBSOLETE as of M2A (Task 5): that
+    // helper and its call site are gone. The hazard it guarded against (a
+    // stale init-time `Project` draft reverting a bind/repo-attach made while
+    // the sheet was open) required `connectionID`/`remoteProjectKey`/`repos`
+    // to live ON `Project`. M2A moved them into `HubConfig`/`ProjectOverlay`,
+    // which `updateProject` never writes, so a stale `Project` draft has
+    // nothing left to clobber — the trap cannot recur by construction, not by
+    // this merge step. See `ProjectBindingTests.staleDraftDoesNotClobberLiveConnectionFields`
+    // for the coverage that replaces it.
+
+    /// Trap (Task 5 fix round 2): `save()` used to write the sheet's WHOLE
+    /// stale `draft` back through `updateProject`, silently reverting any
+    /// `state`/`links`/etc. change made elsewhere while the sheet was open —
+    /// a live bug the coordinator traced through the MCP `add_link` path.
+    /// The fix is structural: `save()` must build what it writes through
+    /// `ProjectSettingsSheetWrite.apply`, which starts from the LIVE project
+    /// and overlays only the fields the sheet owns, rather than ever handing
+    /// `store.updateProject` the bare stale `draft`.
+    @Test("ProjectSettingsSheet.save() never writes the bare stale draft")
+    func saveNeverWritesBareStaleDraft() throws {
         let found = try ViewSource.load().first { $0.name == "ProjectSettingsSheet.swift" }
         let file = try #require(found, "ProjectSettingsSheet.swift not found in \(ViewSource.viewsDirectory.path)")
-        #expect(file.contains("mergingLiveConnectionFields"), """
-            ProjectSettingsSheet.swift no longer calls `mergingLiveConnectionFields` on its \
-            save path. `draft` is an init-time snapshot, but `ProjectConnectionSection` commits a \
-            bind or repo attach immediately through the store — without this merge, Save silently \
-            reverts the user's connectionID/remoteProjectKey/repos to their value when the sheet \
-            was opened.
+        #expect(file.contains("ProjectSettingsSheetWrite.apply"), """
+            ProjectSettingsSheet.swift no longer calls `ProjectSettingsSheetWrite.apply`. That \
+            function is what keeps `save()` from writing the sheet's stale `draft` straight \
+            through — without it, a state/links/etc. change made elsewhere while the sheet is \
+            open is silently reverted on Save.
+            """)
+        let updatesWithBareDraft = file.lineNumbers(containing: "updateProject(draft,")
+        #expect(updatesWithBareDraft.isEmpty, """
+            \(file.name):\(updatesWithBareDraft.map(String.init).joined(separator: ",")) calls \
+            `store.updateProject(draft, ...)` directly — the exact shape of the bug this guard \
+            exists to catch. Route it through `ProjectSettingsSheetWrite.apply` instead.
             """)
     }
 

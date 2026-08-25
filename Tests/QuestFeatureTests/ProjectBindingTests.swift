@@ -5,14 +5,14 @@ import Foundation
 @MainActor
 @Suite("Project binding and repos")
 struct ProjectBindingTests {
-    private func makeStore() -> ProjectStore { ProjectStore(repository: InMemoryProjectRepository()) }
+    private func makeStore() -> ProjectStore { makeProjectStore(InMemoryProjectRepository()) }
 
     @Test("a new project is unbound")
     func defaultsToUnbound() {
         let store = makeStore()
         let project = store.createProject(name: "Quest", kind: .software, actor: .user)
-        #expect(project.connectionID == nil)
-        #expect(project.repos.isEmpty)
+        #expect(store.overlay.hubConfig().binding(for: project.id) == nil)
+        #expect(store.overlay.overlay(for: project.id).repos.isEmpty)
     }
 
     @Test("binding records the connection and the remote key")
@@ -23,9 +23,9 @@ struct ProjectBindingTests {
 
         try store.bindProject(project.id, to: connectionID, remoteProjectKey: "QST", actor: .user)
 
-        let bound = try #require(store.openProject(project.id)?.project)
-        #expect(bound.connectionID == connectionID)
-        #expect(bound.remoteProjectKey == "QST")
+        let binding = try #require(store.overlay.hubConfig().binding(for: project.id))
+        #expect(binding.connectionID == connectionID)
+        #expect(binding.remoteProjectKey == "QST")
     }
 
     @Test("unbinding clears both the connection and the remote key")
@@ -36,9 +36,7 @@ struct ProjectBindingTests {
 
         try store.unbindProject(project.id, actor: .user)
 
-        let unbound = try #require(store.openProject(project.id)?.project)
-        #expect(unbound.connectionID == nil)
-        #expect(unbound.remoteProjectKey == nil)
+        #expect(store.overlay.hubConfig().binding(for: project.id) == nil)
     }
 
     @Test("a project attaches several repos, each naming its own connection")
@@ -54,9 +52,9 @@ struct ProjectBindingTests {
                                           owner: "AhmedMElhalaby", name: "AinkradQuest"),
                              to: project.id, actor: .user)
 
-        let updated = try #require(store.openProject(project.id)?.project)
-        #expect(updated.repos.map(\.slug) == ["acme/api", "AhmedMElhalaby/AinkradQuest"])
-        #expect(Set(updated.repos.map(\.connectionID)) == [work, personal])
+        let updated = store.overlay.overlay(for: project.id).repos
+        #expect(updated.map(\.slug) == ["acme/api", "AhmedMElhalaby/AinkradQuest"])
+        #expect(Set(updated.map(\.connectionID)) == [work, personal])
     }
 
     @Test("the same repo on the same connection is refused twice")
@@ -83,7 +81,7 @@ struct ProjectBindingTests {
                                           owner: "a", name: "b"), to: project.id, actor: .user)
         try store.attachRepo(AttachedRepo(id: UUID(), connectionID: UUID(),
                                           owner: "a", name: "b"), to: project.id, actor: .user)
-        #expect(try #require(store.openProject(project.id)?.project).repos.count == 2)
+        #expect(store.overlay.overlay(for: project.id).repos.count == 2)
     }
 
     @Test("detaching removes exactly one repo")
@@ -97,7 +95,7 @@ struct ProjectBindingTests {
 
         try store.detachRepo(drop.id, from: project.id, actor: .user)
 
-        #expect(try #require(store.openProject(project.id)?.project).repos.map(\.name) == ["keep"])
+        #expect(store.overlay.overlay(for: project.id).repos.map(\.name) == ["keep"])
     }
 
     @Test("detaching an unknown repo throws")
@@ -134,11 +132,21 @@ struct ProjectBindingTests {
         """
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let project = try decoder.decode(Project.self, from: Data(json.utf8))
-        #expect(project.connectionID == nil)
-        #expect(project.repos.isEmpty)
+        #expect(project.legacyConnectionID == nil)
+        #expect(project.legacyRepos.isEmpty)
     }
 
-    @Test("a stale draft cannot clobber a bind/repo attach made while the sheet was open")
+    /// Pre-M2A this test proved `mergingLiveConnectionFields` prevented a
+    /// stale `Project` draft from reverting a bind/attach made through
+    /// `ProjectConnectionSection` while `ProjectSettingsSheet` was open.
+    /// M2A moved `connectionID`/`remoteProjectKey`/`repos` out of `Project`
+    /// entirely — they now live in `HubConfig`/`ProjectOverlay`, which
+    /// `updateProject` never touches — so the hazard this test guarded
+    /// against cannot occur any more: writing a stale `Project` draft has
+    /// nothing left to clobber. Kept, repurposed to prove exactly that:
+    /// binding/attaching through the store, then saving an init-time-stale
+    /// `Project` draft, leaves the overlay/hub data untouched.
+    @Test("a stale project draft cannot clobber a bind/repo attach, because those fields no longer live on Project")
     func staleDraftDoesNotClobberLiveConnectionFields() throws {
         let store = makeStore()
         let project = store.createProject(name: "Quest", kind: .software, actor: .user)
@@ -152,19 +160,18 @@ struct ProjectBindingTests {
                                           owner: "acme", name: "api"),
                              to: project.id, actor: .user)
 
-        // Mirrors `ProjectSettingsSheet.save()`: merge the live connection
-        // fields into the stale draft right before writing it back, exactly as
-        // `statusScheme` is already refreshed there.
         var draft = staleDraft
         draft.name = "Quest Renamed"
-        draft = store.mergingLiveConnectionFields(into: draft)
         try store.updateProject(draft, actor: .user)
 
         let saved = try #require(store.openProject(project.id)?.project)
-        #expect(saved.connectionID == connectionID)
-        #expect(saved.remoteProjectKey == "QST")
-        #expect(saved.repos.map(\.slug) == ["acme/api"])
         #expect(saved.name == "Quest Renamed")
+        // The overlay/hub data, written through the store before this stale
+        // save, survives untouched — `updateProject` has no path to it.
+        let binding = try #require(store.overlay.hubConfig().binding(for: project.id))
+        #expect(binding.connectionID == connectionID)
+        #expect(binding.remoteProjectKey == "QST")
+        #expect(store.overlay.overlay(for: project.id).repos.map(\.slug) == ["acme/api"])
     }
 
     @Test("an AttachedRepo carrying an unrecognized extra field still decodes")
@@ -191,7 +198,7 @@ struct ProjectBindingTests {
         """
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let project = try decoder.decode(Project.self, from: Data(json.utf8))
-        #expect(project.repos.map(\.slug) == ["acme/api"])
+        #expect(project.legacyRepos.map(\.slug) == ["acme/api"])
     }
 
     @Test("severing clears bindings on live AND trashed projects")
@@ -209,12 +216,39 @@ struct ProjectBindingTests {
 
         store.severBindings(toConnection: connectionID, actor: .user)
 
-        #expect(store.openProject(live.id)?.project.connectionID == nil)
-        #expect(store.openProject(live.id)?.project.remoteProjectKey == nil)
+        #expect(store.overlay.hubConfig().binding(for: live.id) == nil)
         // The trashed one is the whole reason this method exists: restoring it
         // must not resurrect a binding to a deleted connection.
-        #expect(store.openProject(trashed.id)?.project.connectionID == nil)
+        #expect(store.overlay.hubConfig().binding(for: trashed.id) == nil)
         // A project on a DIFFERENT connection is untouched.
-        #expect(store.openProject(other.id)?.project.connectionID == otherConnection)
+        #expect(store.overlay.hubConfig().binding(for: other.id)?.connectionID == otherConnection)
+    }
+
+    /// Bind/unbind/attach/detach/sever all moved to writing the overlay/hub
+    /// stores directly and stopped routing through `updateProject` — which is
+    /// where the activity log used to get appended. Each of these five still
+    /// takes an `actor:` parameter; this pins that it is not silently unused.
+    @Test("binding, attaching, detaching, and severing all record activity")
+    func recordsActivity() throws {
+        let store = makeStore()
+        let project = store.createProject(name: "Quest", kind: .software, actor: .user)
+        let connectionID = UUID()
+
+        try store.bindProject(project.id, to: connectionID, remoteProjectKey: "QST", actor: .user)
+        #expect(store.activity(for: project.id).contains { $0.summary.contains("bound") })
+
+        let repo = AttachedRepo(id: UUID(), connectionID: connectionID, owner: "acme", name: "api")
+        try store.attachRepo(repo, to: project.id, actor: .user)
+        #expect(store.activity(for: project.id).contains { $0.summary.contains("attached repo acme/api") })
+
+        try store.detachRepo(repo.id, from: project.id, actor: .user)
+        #expect(store.activity(for: project.id).contains { $0.summary.contains("detached repo acme/api") })
+
+        try store.unbindProject(project.id, actor: .user)
+        #expect(store.activity(for: project.id).contains { $0.summary.contains("unbound") })
+
+        try store.bindProject(project.id, to: connectionID, remoteProjectKey: "QST", actor: .user)
+        store.severBindings(toConnection: connectionID, actor: .user)
+        #expect(store.activity(for: project.id).contains { $0.summary.contains("severed") })
     }
 }
