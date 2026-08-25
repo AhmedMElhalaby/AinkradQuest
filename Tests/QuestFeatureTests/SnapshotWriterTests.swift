@@ -105,6 +105,76 @@ struct SnapshotWriterTests {
         #expect(kept.count == 1)
     }
 
+    @Test("decoding fails when version is absent")
+    func decodeFailsWithoutVersion() throws {
+        let json = """
+        {"takenAt":"2025-08-24T00:00:00Z","overlays":[],
+         "migratedRepoProjects":[],"migratedBindingProjects":[]}
+        """
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        #expect(throws: (any Error).self) {
+            _ = try decoder.decode(OverlaySnapshot.self, from: Data(json.utf8))
+        }
+    }
+
+    @Test("decoding fails when takenAt is absent")
+    func decodeFailsWithoutTakenAt() throws {
+        let json = """
+        {"version":1,"overlays":[],
+         "migratedRepoProjects":[],"migratedBindingProjects":[]}
+        """
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        #expect(throws: (any Error).self) {
+            _ = try decoder.decode(OverlaySnapshot.self, from: Data(json.utf8))
+        }
+    }
+
+    @Test("everything besides version/takenAt is optional and defaults to empty")
+    func decodeDefaultsRest() throws {
+        // Proves the strict rule is scoped to version/takenAt, not blanket —
+        // this is what stops someone "fixing" the failure above by making
+        // every field required.
+        let json = """
+        {"version":1,"takenAt":"2025-08-24T00:00:00Z"}
+        """
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(OverlaySnapshot.self, from: Data(json.utf8))
+
+        #expect(decoded.overlays.isEmpty)
+        #expect(decoded.migratedRepoProjects.isEmpty)
+        #expect(decoded.migratedBindingProjects.isEmpty)
+    }
+
+    @Test("rotate sweeps a stale temp file left by a hard kill")
+    func rotateSweepsStaleTemp() throws {
+        let directory = try tempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let staleTemp = directory.appendingPathComponent("quest-overlay-2020-01-01-000000-aaaa.json.tmp")
+        try Data("stale".utf8).write(to: staleTemp)
+        // Back-date it well past the staleness threshold so it reads as
+        // abandoned rather than a write in flight.
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-3600)], ofItemAtPath: staleTemp.path)
+
+        _ = try SnapshotWriter.rotate(in: directory, keeping: 5)
+
+        #expect(FileManager.default.fileExists(atPath: staleTemp.path) == false)
+    }
+
+    @Test("rotate leaves a fresh temp file alone")
+    func rotateLeavesFreshTempAlone() throws {
+        let directory = try tempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let freshTemp = directory.appendingPathComponent("quest-overlay-2020-01-01-000000-bbbb.json.tmp")
+        try Data("fresh".utf8).write(to: freshTemp)
+
+        _ = try SnapshotWriter.rotate(in: directory, keeping: 5)
+
+        #expect(FileManager.default.fileExists(atPath: freshTemp.path))
+    }
+
     @Test("two snapshots in the same second do not collide")
     func sameSecondFilenames() throws {
         let directory = try tempDirectory()

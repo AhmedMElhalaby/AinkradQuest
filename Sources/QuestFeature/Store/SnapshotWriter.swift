@@ -74,13 +74,39 @@ public enum SnapshotWriter {
         }
     }
 
-    /// Deletes the oldest snapshots beyond `keeping`, newest first by filename.
+    /// A `.tmp` file this old cannot be a write in flight — `write` only ever
+    /// holds one open between `data.write` and `moveItem`, which is a
+    /// millisecond-scale gap, not minutes. Anything older survived a hard
+    /// kill and is abandoned litter, not another process's in-progress write.
+    static let staleTempAge: TimeInterval = 5 * 60
+
+    /// Deletes the oldest snapshots beyond `keeping`, newest first by filename,
+    /// and sweeps abandoned `.tmp` files left by a write that was killed
+    /// between `data.write` and `moveItem` (the writer's own `catch` cleans
+    /// those up on a handled failure, but a hard kill skips that entirely, and
+    /// `rotate`'s normal filter ignores `.tmp` names, so without this sweep
+    /// they accumulate forever).
     ///
     /// Called only AFTER a successful write, so a failed write never costs the
     /// user an existing backup.
     @discardableResult
     public static func rotate(in directory: URL, keeping: Int = keep) throws -> [URL] {
-        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        let allNames = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+
+        // Only ever touch files this writer itself created — this directory
+        // lives in the user's vault and must not delete anything it did not
+        // write, no matter how old.
+        let staleTemps = allNames.filter { $0.hasPrefix("quest-overlay-") && $0.hasSuffix(".json.tmp") }
+        for name in staleTemps {
+            let url = directory.appendingPathComponent(name)
+            guard let modified = try? FileManager.default
+                .attributesOfItem(atPath: url.path)[.modificationDate] as? Date else { continue }
+            if Date().timeIntervalSince(modified) >= staleTempAge {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+
+        let names = allNames
             .filter { $0.hasPrefix("quest-overlay-") && $0.hasSuffix(".json") }
             .sorted(by: >)
         let urls = names.map { directory.appendingPathComponent($0) }
