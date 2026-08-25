@@ -26,11 +26,15 @@ public final class ProjectStore {
 
     private let repository: any ProjectRepository
     /// Where binding/repo data now lives, since M2A moved it out of the
-    /// project document. Built from the SAME repository as this store, so the
-    /// two never disagree about which documents they are reading. Public so
-    /// callers that used to read `Project.connectionID`/`.repos` directly
-    /// (views, `severBindings` callers) can reach the new source of truth.
-    public let overlay: OverlayStore
+    /// project document. Injected rather than built here: this store must
+    /// never construct its own — a second instance over the same repository
+    /// would be a second in-memory cache and a second `HubConfig` copy, with
+    /// writes through one invisible to the other until reload. `internal`
+    /// (not `public`): callers that used to read `Project.connectionID`/
+    /// `.repos` directly reach it through `ProjectStore`'s own methods and
+    /// the in-module views/extensions below, not by taking `update`/
+    /// `updateHubConfig`/`removeOverlay` access on the raw store.
+    let overlay: OverlayStore
     /// Open documents, cached so repeated reads do not re-decode.
     /// `internal` (not `private`) so Task 7's item API, added as an
     /// `extension ProjectStore` in another file in this module, can reach it.
@@ -38,9 +42,11 @@ public final class ProjectStore {
     /// `internal` for the same reason as `documents`.
     var deletedProjectIDs: Set<UUID> = []
 
-    public init(repository: any ProjectRepository) {
+    /// `overlay` must be the ONE instance the rest of the app shares for this
+    /// repository — `QuestApp` builds it once per host and passes it here.
+    public init(repository: any ProjectRepository, overlay: OverlayStore) {
         self.repository = repository
-        self.overlay = OverlayStore(repository: repository)
+        self.overlay = overlay
         let index = repository.loadIndex()
         let live = index.filter { !$0.isTrashed }.map { summary -> ProjectSummary in
             var summary = summary
@@ -56,6 +62,13 @@ public final class ProjectStore {
             + live.filter { $0.state == .archived }
         self.deletedProjectIDs = Set(trashed.map(\.id))
         self.trashedProjects = trashed
+        // Once-per-launch, here rather than on the project-open path (which
+        // runs on every open, on the UI hot path). Trashed projects matter
+        // too: `severBindings` reaches them, so their bindings must exist to
+        // be severed even if they are never opened again before that happens.
+        for id in (live + trashed).map(\.id) {
+            OverlayMigration.migrateIfNeeded(projectID: id, repository: repository, overlay: overlay)
+        }
     }
 
     public var activeProjects: [ProjectSummary] { projects.filter { $0.state == .active } }

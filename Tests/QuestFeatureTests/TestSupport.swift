@@ -2,6 +2,17 @@ import Foundation
 import AinkradAppKit
 @testable import QuestFeature
 
+/// Builds a `ProjectStore` and the `OverlayStore` it needs, both bound to the
+/// SAME repository — the shape `QuestApp` uses in production, now that
+/// `ProjectStore` no longer builds its own `OverlayStore` internally (a
+/// second instance over the same repository would be a second in-memory
+/// cache, invisible to the first until reload). Centralized here so every
+/// test gets that pairing right without repeating it at each call site.
+@MainActor
+func makeProjectStore(_ repository: any ProjectRepository) -> ProjectStore {
+    ProjectStore(repository: repository, overlay: OverlayStore(repository: repository))
+}
+
 /// An in-memory `PluginDocumentStore`, so repository tests exercise the real
 /// encode/decode path without a host.
 final class MemoryDocumentStore: PluginDocumentStore, @unchecked Sendable {

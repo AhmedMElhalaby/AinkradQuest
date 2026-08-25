@@ -5,7 +5,7 @@ import Foundation
 @MainActor
 @Suite("ProjectStore — purge and empty trash")
 struct ProjectStorePurgeTests {
-    private func makeStore() -> ProjectStore { ProjectStore(repository: InMemoryProjectRepository()) }
+    private func makeStore() -> ProjectStore { makeProjectStore(InMemoryProjectRepository()) }
 
     private func projectWithEpic(_ store: ProjectStore) throws -> (project: Project, epic: WorkItem) {
         let project = store.createProject(name: "Quest", kind: .software, actor: .user)

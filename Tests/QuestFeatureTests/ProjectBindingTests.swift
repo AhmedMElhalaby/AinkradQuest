@@ -5,7 +5,7 @@ import Foundation
 @MainActor
 @Suite("Project binding and repos")
 struct ProjectBindingTests {
-    private func makeStore() -> ProjectStore { ProjectStore(repository: InMemoryProjectRepository()) }
+    private func makeStore() -> ProjectStore { makeProjectStore(InMemoryProjectRepository()) }
 
     @Test("a new project is unbound")
     func defaultsToUnbound() {
@@ -222,5 +222,33 @@ struct ProjectBindingTests {
         #expect(store.overlay.hubConfig().binding(for: trashed.id) == nil)
         // A project on a DIFFERENT connection is untouched.
         #expect(store.overlay.hubConfig().binding(for: other.id)?.connectionID == otherConnection)
+    }
+
+    /// Bind/unbind/attach/detach/sever all moved to writing the overlay/hub
+    /// stores directly and stopped routing through `updateProject` — which is
+    /// where the activity log used to get appended. Each of these five still
+    /// takes an `actor:` parameter; this pins that it is not silently unused.
+    @Test("binding, attaching, detaching, and severing all record activity")
+    func recordsActivity() throws {
+        let store = makeStore()
+        let project = store.createProject(name: "Quest", kind: .software, actor: .user)
+        let connectionID = UUID()
+
+        try store.bindProject(project.id, to: connectionID, remoteProjectKey: "QST", actor: .user)
+        #expect(store.activity(for: project.id).contains { $0.summary.contains("bound") })
+
+        let repo = AttachedRepo(id: UUID(), connectionID: connectionID, owner: "acme", name: "api")
+        try store.attachRepo(repo, to: project.id, actor: .user)
+        #expect(store.activity(for: project.id).contains { $0.summary.contains("attached repo acme/api") })
+
+        try store.detachRepo(repo.id, from: project.id, actor: .user)
+        #expect(store.activity(for: project.id).contains { $0.summary.contains("detached repo acme/api") })
+
+        try store.unbindProject(project.id, actor: .user)
+        #expect(store.activity(for: project.id).contains { $0.summary.contains("unbound") })
+
+        try store.bindProject(project.id, to: connectionID, remoteProjectKey: "QST", actor: .user)
+        store.severBindings(toConnection: connectionID, actor: .user)
+        #expect(store.activity(for: project.id).contains { $0.summary.contains("severed") })
     }
 }
