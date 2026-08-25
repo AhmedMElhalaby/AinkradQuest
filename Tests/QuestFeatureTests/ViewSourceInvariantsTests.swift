@@ -89,6 +89,32 @@ struct ViewSourceInvariantsTests {
     // this merge step. See `ProjectBindingTests.staleDraftDoesNotClobberLiveConnectionFields`
     // for the coverage that replaces it.
 
+    /// Trap (Task 5 fix round 2): `save()` used to write the sheet's WHOLE
+    /// stale `draft` back through `updateProject`, silently reverting any
+    /// `state`/`links`/etc. change made elsewhere while the sheet was open —
+    /// a live bug the coordinator traced through the MCP `add_link` path.
+    /// The fix is structural: `save()` must build what it writes through
+    /// `ProjectSettingsSheetWrite.apply`, which starts from the LIVE project
+    /// and overlays only the fields the sheet owns, rather than ever handing
+    /// `store.updateProject` the bare stale `draft`.
+    @Test("ProjectSettingsSheet.save() never writes the bare stale draft")
+    func saveNeverWritesBareStaleDraft() throws {
+        let found = try ViewSource.load().first { $0.name == "ProjectSettingsSheet.swift" }
+        let file = try #require(found, "ProjectSettingsSheet.swift not found in \(ViewSource.viewsDirectory.path)")
+        #expect(file.contains("ProjectSettingsSheetWrite.apply"), """
+            ProjectSettingsSheet.swift no longer calls `ProjectSettingsSheetWrite.apply`. That \
+            function is what keeps `save()` from writing the sheet's stale `draft` straight \
+            through — without it, a state/links/etc. change made elsewhere while the sheet is \
+            open is silently reverted on Save.
+            """)
+        let updatesWithBareDraft = file.lineNumbers(containing: "updateProject(draft,")
+        #expect(updatesWithBareDraft.isEmpty, """
+            \(file.name):\(updatesWithBareDraft.map(String.init).joined(separator: ",")) calls \
+            `store.updateProject(draft, ...)` directly — the exact shape of the bug this guard \
+            exists to catch. Route it through `ProjectSettingsSheetWrite.apply` instead.
+            """)
+    }
+
     /// Trap: `ConnectionsSettings` is a SECTION (`AinkradSectionFrame`) sitting
     /// inside `QuestSettingsView`'s stack, not a window or a full-size root.
     /// `.ainkradModal` renders in the MODIFIED VIEW'S OWN BOUNDS — attaching
