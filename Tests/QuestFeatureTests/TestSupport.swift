@@ -42,7 +42,7 @@ final class FailingSaveProjectRepository: ProjectRepository {
         self.connections = connections
     }
 
-    func loadOverlay(_ projectID: UUID) -> ProjectOverlay? { overlays[projectID] }
+    func loadOverlay(_ projectID: UUID) throws -> ProjectOverlay? { overlays[projectID] }
     func saveOverlay(_ overlay: ProjectOverlay) throws {
         guard !failSaves else { throw SaveFailure() }
         overlays[overlay.projectID] = overlay

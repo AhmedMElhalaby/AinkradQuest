@@ -14,7 +14,7 @@ struct OverlayRepositoryTests {
         try repository.saveOverlay(overlay)
 
         let reloaded = DocumentProjectRepository(documents: documents)
-        #expect(reloaded.loadOverlay(projectID)?.notes == "mine")
+        #expect(try reloaded.loadOverlay(projectID)?.notes == "mine")
     }
 
     @Test("each project's overlay is its own document")
@@ -32,9 +32,9 @@ struct OverlayRepositoryTests {
     }
 
     @Test("a missing overlay loads as nil rather than throwing")
-    func missingOverlay() {
+    func missingOverlay() throws {
         let repository = DocumentProjectRepository(documents: MemoryDocumentStore())
-        #expect(repository.loadOverlay(UUID()) == nil)
+        #expect(try repository.loadOverlay(UUID()) == nil)
     }
 
     @Test("removing an overlay deletes its document")
@@ -46,8 +46,42 @@ struct OverlayRepositoryTests {
 
         repository.removeOverlay(projectID)
 
-        #expect(repository.loadOverlay(projectID) == nil)
+        #expect(try repository.loadOverlay(projectID) == nil)
         #expect(documents.keys.contains("overlay-project-\(projectID.uuidString)") == false)
+    }
+
+    @Test("a corrupt overlay document throws rather than reading as empty")
+    func corruptOverlayThrows() throws {
+        let documents = MemoryDocumentStore()
+        let projectID = UUID()
+        documents.setData(Data("not json".utf8), forKey: DocumentProjectRepository.overlayKey(projectID))
+        let repository = DocumentProjectRepository(documents: documents)
+
+        let thrown = #expect(throws: QuestError.self) {
+            _ = try repository.loadOverlay(projectID)
+        }
+        #expect(thrown == .overlayCorrupt(projectID))
+        #expect(thrown?.message.contains("\(projectID)") == true)
+        #expect(thrown?.message.isEmpty == false)
+    }
+
+    @Test("a missing overlay still returns nil and does not throw, after the throwing signature change")
+    func missingOverlayStillDoesNotThrow() throws {
+        let repository = DocumentProjectRepository(documents: MemoryDocumentStore())
+        let projectID = UUID()
+        #expect(try repository.loadOverlay(projectID) == nil)
+    }
+
+    @Test("a valid overlay still round-trips, unchanged, after the throwing signature change")
+    func validOverlayStillRoundTrips() throws {
+        let documents = MemoryDocumentStore()
+        let repository = DocumentProjectRepository(documents: documents)
+        let projectID = UUID()
+        var overlay = ProjectOverlay(projectID: projectID)
+        overlay.notes = "still here"
+        try repository.saveOverlay(overlay)
+
+        #expect(try repository.loadOverlay(projectID)?.notes == "still here")
     }
 
     @Test("the link map round-trips and lives in its own document")

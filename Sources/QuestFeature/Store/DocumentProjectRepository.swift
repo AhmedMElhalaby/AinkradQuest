@@ -67,10 +67,11 @@ public final class DocumentProjectRepository: ProjectRepository {
     static let linkMapKey = "link-map"
     static let hubConfigKey = "hub-config"
 
-    public func loadOverlay(_ projectID: UUID) -> ProjectOverlay? {
-        guard let data = documents.data(forKey: Self.overlayKey(projectID)),
-              let overlay = try? decoder.decode(ProjectOverlay.self, from: data)
-        else { return nil }
+    public func loadOverlay(_ projectID: UUID) throws -> ProjectOverlay? {
+        guard let data = documents.data(forKey: Self.overlayKey(projectID)) else { return nil }
+        guard let overlay = try? decoder.decode(ProjectOverlay.self, from: data) else {
+            throw QuestError.overlayCorrupt(projectID)
+        }
         return overlay
     }
 
