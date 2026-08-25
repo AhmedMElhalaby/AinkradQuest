@@ -59,4 +59,24 @@ struct OverlayHealthTests {
         // write, so a warning could vanish before the user acted on it.
         #expect(store.health == .unreadable(corrupt))
     }
+
+    @Test("a successful write does not mask an unresolved write-blocked state")
+    func successDoesNotMaskWriteBlocked() {
+        let documents = MemoryDocumentStore()
+        let blocked = UUID(), healthy = UUID()
+        documents.setData(Data("{not json".utf8),
+                          forKey: DocumentProjectRepository.overlayKey(blocked))
+        let store = OverlayStore(repository: DocumentProjectRepository(documents: documents))
+        _ = store.overlay(for: blocked)
+
+        _ = store.update(projectID: blocked) { $0.notes = "blocked write" }
+        #expect(store.health == .writeBlocked(blocked))
+        #expect(store.health.isReadOnly)
+
+        _ = store.update(projectID: healthy) { $0.notes = "unrelated success" }
+
+        // The unrelated success must not mask the unresolved write-blocked
+        // state, same as `.unreadable`.
+        #expect(store.health == .writeBlocked(blocked))
+    }
 }
