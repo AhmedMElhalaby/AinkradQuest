@@ -142,4 +142,66 @@ struct ProjectStorePurgeTests {
 
         #expect(outcome == TrashPurgeOutcome(purgedItems: 0, purgedProjects: 0, failures: []))
     }
+
+    @Test("purging a project clears its overlay, binding, markers and link rows")
+    func purgeClearsOverlayState() throws {
+        let repository = InMemoryProjectRepository()
+        let store = makeProjectStore(repository)
+        let project = store.createProject(name: "Doomed", kind: .software, actor: .user)
+        let item = try store.createItem(projectID: project.id, parentID: nil, type: .epic,
+                                        title: "Epic", statusID: "todo", actor: .user)
+        let connectionID = UUID()
+
+        _ = store.overlay.update(projectID: project.id) { $0.notes = "private" }
+        store.overlay.updateItem(item.id, in: project.id) { $0.notes = "item note" }
+        store.overlay.updateHubConfig {
+            $0.bind(project.id, to: ProjectBinding(connectionID: connectionID, remoteProjectKey: "X"))
+            $0.markReposMigrated(project.id)
+            $0.markBindingMigrated(project.id)
+        }
+        store.overlay.updateLinkMap {
+            $0.link(RemoteRef(connectionID: connectionID, remoteKey: "X-1"), to: item.id)
+        }
+
+        try store.deleteProject(project.id, actor: .user)
+        try store.purgeProject(project.id)
+
+        #expect(store.overlay.overlay(for: project.id).isEmpty)
+        #expect(store.overlay.hubConfig().binding(for: project.id) == nil)
+        #expect(store.overlay.hubConfig().hasMigratedRepos(project.id) == false)
+        #expect(store.overlay.hubConfig().hasMigratedBinding(project.id) == false)
+        // Keyed by ITEM id, so this row can only be found while the document
+        // still exists — which is why the items are read before the purge.
+        #expect(store.overlay.linkMap().remoteRef(for: item.id) == nil)
+    }
+
+    @Test("purging one project leaves another project's overlay state alone")
+    func purgeIsScopedToOneProject() throws {
+        let repository = InMemoryProjectRepository()
+        let store = makeProjectStore(repository)
+        let doomed = store.createProject(name: "Doomed", kind: .software, actor: .user)
+        let keeper = store.createProject(name: "Keeper", kind: .software, actor: .user)
+        let connectionID = UUID()
+        _ = store.overlay.update(projectID: keeper.id) { $0.notes = "keep me" }
+        store.overlay.updateHubConfig {
+            $0.bind(keeper.id, to: ProjectBinding(connectionID: connectionID, remoteProjectKey: "K"))
+            $0.markReposMigrated(keeper.id)
+        }
+
+        try store.deleteProject(doomed.id, actor: .user)
+        try store.purgeProject(doomed.id)
+
+        #expect(store.overlay.overlay(for: keeper.id).notes == "keep me")
+        #expect(store.overlay.hubConfig().binding(for: keeper.id)?.remoteProjectKey == "K")
+        #expect(store.overlay.hubConfig().hasMigratedRepos(keeper.id))
+    }
+
+    @Test("purging a project with no overlay state does not fail")
+    func purgeWithNothingToClean() throws {
+        let store = makeStore()
+        let project = store.createProject(name: "Bare", kind: .general, actor: .user)
+
+        try store.deleteProject(project.id, actor: .user)
+        #expect(throws: Never.self) { try store.purgeProject(project.id) }
+    }
 }

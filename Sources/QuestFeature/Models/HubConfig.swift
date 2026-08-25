@@ -86,6 +86,17 @@ public struct HubConfig: Codable, Sendable {
         migratedBindingProjects.insert(projectID.uuidString)
     }
 
+    /// Clears both migration markers for a project.
+    ///
+    /// Called when a project is PURGED — the markers describe work done on a
+    /// document that no longer exists, and a project restored later from a
+    /// backup with its legacy fields intact must be migrated again rather than
+    /// skipped by a marker nothing cleaned up.
+    public mutating func clearMigrationMarkers(_ projectID: UUID) {
+        migratedRepoProjects.remove(projectID.uuidString)
+        migratedBindingProjects.remove(projectID.uuidString)
+    }
+
     private enum CodingKeys: String, CodingKey {
         case bindings, migratedRepoProjects, migratedBindingProjects
     }

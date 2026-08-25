@@ -195,6 +195,11 @@ public final class ProjectStore {
     /// the document being destroyed, so there is nowhere left to log to.
     public func purgeProject(_ id: UUID) throws {
         guard deletedProjectIDs.contains(id) else { throw QuestError.projectNotInTrash(id) }
+        // Read the items BEFORE anything is destroyed: link-map rows are keyed
+        // by ITEM id, and once the document is gone there is no way to learn
+        // which rows belonged to this project. They would leak forever.
+        let itemIDs = allItems(in: id).map(\.id)
+
         deletedProjectIDs.remove(id)
         trashedProjects.removeAll { $0.id == id }
         documents.removeValue(forKey: id)
@@ -206,6 +211,22 @@ public final class ProjectStore {
         // first leaves at most a stray file that nothing references.
         saveIndex()
         repository.removeProject(id)
+
+        // Overlay state is cleaned up LAST, after the project is definitely
+        // gone. The overlay is the irreplaceable store: clearing it first and
+        // then failing to destroy the project would leave a live project whose
+        // notes and time entries had already been deleted.
+        overlay.removeOverlay(for: id)
+        overlay.updateHubConfig {
+            $0.unbind(id)
+            $0.clearMigrationMarkers(id)
+        }
+        if !itemIDs.isEmpty {
+            overlay.updateLinkMap { map in
+                for itemID in itemIDs { map.unlink(localID: itemID) }
+            }
+        }
+
         bumpRevision()
     }
 
