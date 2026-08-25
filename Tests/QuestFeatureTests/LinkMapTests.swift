@@ -118,4 +118,20 @@ struct LinkMapTests {
         // caller decides which of these count for a delete guard.
         #expect(Set(config.projectIDs(boundTo: connection)) == [a, b])
     }
+
+    @Test("hub config persists bindings keyed by uuidString, not raw UUID")
+    func bindingsKeyedByUUIDString() throws {
+        var config = HubConfig()
+        let project = UUID(), connection = UUID()
+        config.bind(project, to: ProjectBinding(connectionID: connection, remoteProjectKey: "QST"))
+
+        let data = try JSONEncoder().encode(config)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let bindings = try #require(object?["bindings"] as? [String: Any])
+
+        #expect(bindings[project.uuidString] != nil)
+
+        let decoded = try JSONDecoder().decode(HubConfig.self, from: data)
+        #expect(decoded.binding(for: project)?.remoteProjectKey == "QST")
+    }
 }
