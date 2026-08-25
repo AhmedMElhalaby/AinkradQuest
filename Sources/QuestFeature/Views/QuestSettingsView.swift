@@ -9,10 +9,15 @@ import AinkradAppKit
 /// already-open window.
 ///
 /// Also hosts the two root grants (`FolderBookmark.projectsRootKey` /
-/// `vaultRootKey`) that drive automatic attachment suggestions at project
-/// creation time — and ONLY that. Granting a root does not attach anything by
-/// itself; a project's Overview always has its own "Attach folder…" button
-/// (`FolderAttachButton`), independent of these grants.
+/// `vaultRootKey`). `projectsRootKey` drives ONLY attachment suggestions at
+/// project-creation time — granting it does not attach anything by itself; a
+/// project's Overview always has its own "Attach folder…" button
+/// (`FolderAttachButton`), independent of this grant. `vaultRootKey` has a
+/// SECOND consumer as of the backup work: `BackupSettings` reads and writes
+/// through the same bookmark to back up and restore the overlay. This is the
+/// ONLY place either grant is set or cleared — `BackupSettings` shows the
+/// vault grant read-only and points here to change it, so there is never a
+/// second control that can silently diverge from this one.
 struct QuestSettingsView: View {
     let presentation: any PluginPresentationControl
     let documents: PluginDocumentStore
@@ -88,14 +93,14 @@ struct QuestSettingsView: View {
 
             AinkradSectionFrame(title: "Folder grants") {
                 VStack(alignment: .leading, spacing: AinkradSpacing.md) {
-                    caption("These folders are used only to suggest attachments when a project is created — nothing is read or written otherwise. Every project's Overview also has its own Attach folder… button, which works whether or not you set anything here.")
+                    caption("Every project's Overview also has its own Attach folder… button, which works whether or not you set anything here.")
 
                     rootRow(title: "Projects folder",
-                           help: "Suggests a matching repo or folder by name when you create a project.",
+                           help: "Used only to suggest a matching repo or folder by name when you create a project — nothing else reads or writes it.",
                            key: FolderBookmark.projectsRootKey)
 
                     rootRow(title: "Vault folder",
-                           help: "Suggests a matching vault folder by name when you create a project.",
+                           help: "Two uses: suggests a matching vault folder by name when you create a project, and is where Quest backs up and restores your notes, personal priority and time entries — see Backups above.",
                            key: FolderBookmark.vaultRootKey)
 
                     // A banner, not a toast: this view is mounted by the HOST's

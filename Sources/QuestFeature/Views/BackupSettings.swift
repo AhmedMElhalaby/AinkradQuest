@@ -45,6 +45,15 @@ enum SnapshotAge {
 /// `restoreError` — the same `@Binding` shape `QuestSettingsView` uses to
 /// hoist `connectionDraft` out of `ConnectionsSettings`. `BackupSettings`
 /// itself never presents `.ainkradConfirmDialog`.
+///
+/// This view does NOT present its own "Choose…"/"Clear" for the vault
+/// folder. `FolderBookmark.vaultRootKey` is ONE grant with two consumers —
+/// this view's backups and `QuestSettingsView`'s attachment suggestions — and
+/// an earlier round of this view had its own picker here, which let the same
+/// bookmark be set or cleared from two independent-looking controls with no
+/// indication they shared state. The grant now lives only in "Folder grants"
+/// (`QuestSettingsView.rootRow`); this section reads it read-only and points
+/// there to change it.
 struct BackupSettings: View {
     @Bindable var snapshots: SnapshotStore
     /// The snapshot awaiting a confirmed restore, owned by `QuestSettingsView`
@@ -108,39 +117,40 @@ struct BackupSettings: View {
 
     // MARK: - Grant state
 
+    /// Read-only: the vault folder itself is granted/changed/cleared only in
+    /// "Folder grants" below, so there is exactly one control that can ever
+    /// mutate `FolderBookmark.vaultRootKey`. See the type doc comment.
     private var grantRow: some View {
         _ = revision
         let grant = snapshots.vaultGrant()
         return AinkradFormRow(title: "Vault folder", help: grantHelp(grant)) {
-            HStack(spacing: AinkradSpacing.sm) {
-                VStack(alignment: .leading, spacing: AinkradSpacing.xs) {
-                    Text(grantPathText(grant))
-                        .font(AinkradFontResolver.font(.mono, typography: typo))
-                        .foregroundStyle(theme.foreground.opacity(0.8))
-                        .lineLimit(1).truncationMode(.middle)
-                    if case .unresolvable = grant {
-                        // Must never read as "not configured" — the user
-                        // granted a folder and backups have silently
-                        // stopped, which is a very different problem from
-                        // never having set one up.
-                        Text("This folder can no longer be found — it was moved, renamed, or deleted. Backups have STOPPED. Choose it again to resume.")
-                            .font(.caption)
-                            .foregroundStyle(statusColors.warning)
-                    }
+            VStack(alignment: .leading, spacing: AinkradSpacing.xs) {
+                Text(grantPathText(grant))
+                    .font(AinkradFontResolver.font(.mono, typography: typo))
+                    .foregroundStyle(theme.foreground.opacity(0.8))
+                    .lineLimit(1).truncationMode(.middle)
+                if case .unresolvable = grant {
+                    // Must never read as "not configured" — the user
+                    // granted a folder and backups have silently stopped,
+                    // which is a very different problem from never having
+                    // set one up.
+                    Text("This folder can no longer be found — it was moved, renamed, or deleted. Backups have STOPPED. Fix it under Folder grants → Vault folder below.")
+                        .font(.caption)
+                        .foregroundStyle(statusColors.warning)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                AinkradButton(title: "Choose…", style: .secondary) { pickVaultFolder() }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     /// This is the DEFAULT state on a fresh install, not an edge case — most
     /// users will read this before ever granting anything, so it must say
-    /// plainly that backups are off and how to turn them on.
+    /// plainly that backups are off and how to turn them on — pointing at
+    /// "Folder grants", the only place that can change it.
     private func grantHelp(_ grant: FolderBookmark.Grant) -> String {
         switch grant {
         case .notGranted:
-            "Backups are off. Choose a vault folder to start backing up your notes and priorities."
+            "Backups are off. Set a vault folder under Folder grants → Vault folder below to start backing up your notes and priorities."
         case .granted:
             "Backups are written here, keeping the last \(SnapshotWriter.keep)."
         case .unresolvable:
@@ -187,20 +197,5 @@ struct BackupSettings: View {
     private func backUpNow() {
         _ = snapshots.snapshotNow()
         revision += 1
-    }
-
-    private func pickVaultFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try snapshots.saveVaultGrant(url)
-            revision += 1
-            restoreError = nil
-        } catch {
-            restoreError = "Could not save that folder: \(error.localizedDescription)"
-        }
     }
 }
