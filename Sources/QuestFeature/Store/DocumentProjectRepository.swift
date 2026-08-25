@@ -62,4 +62,46 @@ public final class DocumentProjectRepository: ProjectRepository {
         let data = try encoder.encode(connections)
         documents.setData(data, forKey: Self.connectionsKey)
     }
+
+    static func overlayKey(_ id: UUID) -> String { "overlay-project-\(id.uuidString)" }
+    static let linkMapKey = "link-map"
+    static let hubConfigKey = "hub-config"
+
+    public func loadOverlay(_ projectID: UUID) -> ProjectOverlay? {
+        guard let data = documents.data(forKey: Self.overlayKey(projectID)),
+              let overlay = try? decoder.decode(ProjectOverlay.self, from: data)
+        else { return nil }
+        return overlay
+    }
+
+    public func saveOverlay(_ overlay: ProjectOverlay) throws {
+        let data = try encoder.encode(overlay)
+        documents.setData(data, forKey: Self.overlayKey(overlay.projectID))
+    }
+
+    public func removeOverlay(_ projectID: UUID) {
+        documents.setData(nil, forKey: Self.overlayKey(projectID))
+    }
+
+    public func loadLinkMap() -> LinkMap {
+        guard let data = documents.data(forKey: Self.linkMapKey),
+              let map = try? decoder.decode(LinkMap.self, from: data)
+        else { return LinkMap() }
+        return map
+    }
+
+    public func saveLinkMap(_ map: LinkMap) throws {
+        documents.setData(try encoder.encode(map), forKey: Self.linkMapKey)
+    }
+
+    public func loadHubConfig() -> HubConfig {
+        guard let data = documents.data(forKey: Self.hubConfigKey),
+              let config = try? decoder.decode(HubConfig.self, from: data)
+        else { return HubConfig() }
+        return config
+    }
+
+    public func saveHubConfig(_ config: HubConfig) throws {
+        documents.setData(try encoder.encode(config), forKey: Self.hubConfigKey)
+    }
 }

@@ -23,6 +23,9 @@ final class FailingSaveProjectRepository: ProjectRepository {
     private var index: [ProjectSummary] = []
     private var documents: [UUID: ProjectDocument] = [:]
     private var connections: [Connection] = []
+    private var overlays: [UUID: ProjectOverlay] = [:]
+    private var linkMap = LinkMap()
+    private var hubConfig = HubConfig()
     var failSaves = true
 
     func loadIndex() -> [ProjectSummary] { index }
@@ -37,6 +40,23 @@ final class FailingSaveProjectRepository: ProjectRepository {
     func saveConnections(_ connections: [Connection]) throws {
         guard !failSaves else { throw SaveFailure() }
         self.connections = connections
+    }
+
+    func loadOverlay(_ projectID: UUID) -> ProjectOverlay? { overlays[projectID] }
+    func saveOverlay(_ overlay: ProjectOverlay) throws {
+        guard !failSaves else { throw SaveFailure() }
+        overlays[overlay.projectID] = overlay
+    }
+    func removeOverlay(_ projectID: UUID) { overlays.removeValue(forKey: projectID) }
+    func loadLinkMap() -> LinkMap { linkMap }
+    func saveLinkMap(_ map: LinkMap) throws {
+        guard !failSaves else { throw SaveFailure() }
+        linkMap = map
+    }
+    func loadHubConfig() -> HubConfig { hubConfig }
+    func saveHubConfig(_ config: HubConfig) throws {
+        guard !failSaves else { throw SaveFailure() }
+        hubConfig = config
     }
 }
 
