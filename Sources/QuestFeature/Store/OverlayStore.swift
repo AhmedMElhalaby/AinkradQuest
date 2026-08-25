@@ -19,6 +19,13 @@ public final class OverlayStore {
     /// write failure is KEPT, exactly as `ProjectStore.persistenceFailure`
     /// does; a corrupt-load failure has no in-memory change to keep.
     public private(set) var persistenceFailure: String?
+    /// Typed successor to `persistenceFailure`, kept alongside it rather than
+    /// replacing it: three call sites still read the string, and migrating
+    /// them is follow-on work, not this property's job. Unlike
+    /// `persistenceFailure`, an unrelated successful write must NOT downgrade
+    /// an unresolved `.unreadable` — only resolving that specific project's
+    /// condition (a fixed load, or `removeOverlay`) clears it.
+    public private(set) var health: OverlayHealth = .healthy
     /// Bumped once per applied mutation, so a view can memoize derived work
     /// instead of recomputing on every body pass. Same contract as
     /// `ProjectStore.revision`: "in-memory state changed", not "durably saved".
@@ -58,6 +65,7 @@ public final class OverlayStore {
             unreadableProjects.insert(projectID)
             persistenceFailure = "Your notes and priorities could not be read: "
                 + ((error as? QuestError)?.message ?? String(describing: error))
+            health = .unreadable(projectID)
             let empty = ProjectOverlay(projectID: projectID)
             overlays[projectID] = empty
             return empty
@@ -109,6 +117,9 @@ public final class OverlayStore {
         overlays.removeValue(forKey: projectID)
         unreadableProjects.remove(projectID)
         repository.removeOverlay(projectID)
+        if health == .unreadable(projectID) || health == .writeBlocked(projectID) {
+            health = .healthy
+        }
         revision += 1
     }
 
@@ -136,6 +147,7 @@ public final class OverlayStore {
             revision += 1
             persistenceFailure = "This project's overlay could not be read, so the change "
                 + "was not saved. Restore or remove the corrupt overlay before editing it again."
+            health = .writeBlocked(overlay.projectID)
             return false
         }
         overlays[overlay.projectID] = overlay
@@ -148,10 +160,17 @@ public final class OverlayStore {
         do {
             try write()
             persistenceFailure = nil
+            // An unresolved `.unreadable`/`.writeBlocked` for SOME project must
+            // not be masked by an unrelated write's success elsewhere — only a
+            // `.writeFailed` (this same kind of retryable condition) clears.
+            if case .writeFailed = health {
+                health = .healthy
+            }
             return true
         } catch {
             persistenceFailure = "Your notes and priorities could not be saved: "
                 + ((error as? QuestError)?.message ?? error.localizedDescription)
+            health = .writeFailed((error as? QuestError)?.message ?? error.localizedDescription)
             return false
         }
     }
