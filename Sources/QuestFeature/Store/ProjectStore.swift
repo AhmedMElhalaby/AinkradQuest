@@ -35,6 +35,9 @@ public final class ProjectStore {
     /// the in-module views/extensions below, not by taking `update`/
     /// `updateHubConfig`/`removeOverlay` access on the raw store.
     let overlay: OverlayStore
+    /// Raised when a future migration needs every project re-scanned. See
+    /// `HubConfig.scanCompleteThrough`.
+    static let migrationGeneration = 1
     /// Open documents, cached so repeated reads do not re-decode.
     /// `internal` (not `private`) so Task 7's item API, added as an
     /// `extension ProjectStore` in another file in this module, can reach it.
@@ -75,18 +78,28 @@ public final class ProjectStore {
         // attention" banner, already rendered by `QuestShell` — a second,
         // migration-specific property would just be a second place a view
         // has to remember to check.
-        let blockedCount = (live + trashed)
-            .map(\.id)
-            .reduce(into: 0) { count, id in
-                if OverlayMigration.migrateIfNeeded(projectID: id, repository: repository,
-                                                    overlay: overlay) == .blocked {
-                    count += 1
+        if overlay.hubConfig().needsScan(Self.migrationGeneration) {
+            var sawUnfinished = false
+            let blockedCount = (live + trashed)
+                .map(\.id)
+                .reduce(into: 0) { count, id in
+                    let outcome = OverlayMigration.migrateIfNeeded(projectID: id, repository: repository,
+                                                                   overlay: overlay)
+                    if outcome == .blocked { count += 1 }
+                    if outcome == .blocked || outcome == .incomplete { sawUnfinished = true }
                 }
+            if blockedCount > 0 {
+                let plural = blockedCount == 1 ? "project's" : "projects'"
+                persistenceFailure = "\(blockedCount) \(plural) repos could not finish migrating: "
+                    + "their overlay could not be read. Restore or remove the corrupt overlay to complete the move."
             }
-        if blockedCount > 0 {
-            let plural = blockedCount == 1 ? "project's" : "projects'"
-            persistenceFailure = "\(blockedCount) \(plural) repos could not finish migrating: "
-                + "their overlay could not be read. Restore or remove the corrupt overlay to complete the move."
+            // Only mark the scan complete once the loop finishes AND nothing
+            // was left unfinished — a `.blocked`/`.incomplete` project's data
+            // did not move, and needs another attempt on the next launch.
+            // Marking the scan complete anyway would strand it permanently.
+            if !sawUnfinished {
+                overlay.updateHubConfig { $0.markScanComplete(Self.migrationGeneration) }
+            }
         }
     }
 

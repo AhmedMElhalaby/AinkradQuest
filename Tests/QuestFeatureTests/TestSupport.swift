@@ -24,6 +24,28 @@ final class MemoryDocumentStore: PluginDocumentStore, @unchecked Sendable {
     var keys: [String] { Array(storage.keys) }
 }
 
+/// A `MemoryDocumentStore` that counts reads, so a test can prove work was
+/// SKIPPED rather than merely that its result was the same.
+final class CountingDocumentStore: PluginDocumentStore, @unchecked Sendable {
+    private var storage: [String: Data] = [:]
+    private var readCounts: [String: Int] = [:]
+
+    func data(forKey key: String) -> Data? {
+        readCounts[key, default: 0] += 1
+        return storage[key]
+    }
+
+    func setData(_ data: Data?, forKey key: String) {
+        if let data { storage[key] = data } else { storage.removeValue(forKey: key) }
+    }
+
+    func resetCounts() { readCounts.removeAll() }
+
+    func reads(withPrefix prefix: String) -> Int {
+        readCounts.filter { $0.key.hasPrefix(prefix) }.values.reduce(0, +)
+    }
+}
+
 /// A `ProjectRepository` whose `saveProject` REPORTS a failed write by
 /// throwing, so tests can verify `ProjectStore.persistenceFailure` without
 /// touching disk. `loadIndex`/`saveIndex` still work normally; only project

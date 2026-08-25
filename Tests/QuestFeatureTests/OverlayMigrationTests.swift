@@ -285,4 +285,41 @@ struct OverlayMigrationTests {
         let failure = try #require(store.persistenceFailure)
         #expect(failure.contains("1"))
     }
+
+    @Test("a completed scan does not re-read every project on the next launch")
+    func scanIsGatedAfterCompletion() throws {
+        let documents = CountingDocumentStore()
+        let repository = DocumentProjectRepository(documents: documents)
+        let overlay = OverlayStore(repository: repository)
+        let first = ProjectStore(repository: repository, overlay: overlay)
+        _ = first.createProject(name: "One", kind: .software, actor: .user)
+        _ = first.createProject(name: "Two", kind: .software, actor: .user)
+
+        documents.resetCounts()
+        let overlaySecond = OverlayStore(repository: repository)
+        _ = ProjectStore(repository: repository, overlay: overlaySecond)
+
+        // The scan already completed, so relaunching must not full-decode every
+        // project document again. `loadIndex` always reads "project-index" —
+        // itself prefixed "project-" — so isolate PER-PROJECT reads by
+        // subtracting that unavoidable read rather than asserting zero total.
+        #expect(documents.reads(withPrefix: "project-") == documents.reads(withPrefix: "project-index"))
+    }
+
+    @Test("an ungated store still scans, so an upgrade migrates")
+    func scanRunsWhenNotYetComplete() throws {
+        let documents = CountingDocumentStore()
+        let repository = DocumentProjectRepository(documents: documents)
+        let overlay = OverlayStore(repository: repository)
+        let store = ProjectStore(repository: repository, overlay: overlay)
+        _ = store.createProject(name: "One", kind: .software, actor: .user)
+
+        // Clear the completion marker to simulate a pre-gate store.
+        overlay.updateHubConfig { $0.scanCompleteThrough = 0 }
+        documents.resetCounts()
+        let overlaySecond = OverlayStore(repository: repository)
+        _ = ProjectStore(repository: repository, overlay: overlaySecond)
+
+        #expect(documents.reads(withPrefix: "project-") > documents.reads(withPrefix: "project-index"))
+    }
 }
