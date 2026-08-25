@@ -27,8 +27,25 @@ public struct HubConfig: Codable, Sendable {
     /// costs nothing now and would cost real confusion once this is persisted.
     public var bindings: [String: ProjectBinding]
 
+    /// Per-project, per-half markers for `OverlayMigration`, keyed by
+    /// `uuidString` for the same reason `bindings` is. Live HERE rather than
+    /// in the overlay: a project whose overlay failed to decode has its
+    /// overlay writes blocked (see `OverlayStore`), so a marker stored there
+    /// could never be written for that project and would retry forever.
+    /// `HubConfig` is a separate document, not gated by overlay corruption.
+    ///
+    /// Once set, a marker is NEVER cleared by ordinary use — including by
+    /// `unbind`/detaching a repo. Without that, a user who migrates then
+    /// deliberately unbinds a project (or detaches all its repos) would see
+    /// the legacy fields (never cleared, by design) re-migrated on the next
+    /// launch, silently resurrecting data they removed on purpose.
+    public var migratedRepoProjects: Set<String>
+    public var migratedBindingProjects: Set<String>
+
     public init() {
         bindings = [:]
+        migratedRepoProjects = []
+        migratedBindingProjects = []
     }
 
     public func binding(for projectID: UUID) -> ProjectBinding? {
@@ -51,5 +68,37 @@ public struct HubConfig: Codable, Sendable {
         bindings
             .filter { $0.value.connectionID == connectionID }
             .compactMap { UUID(uuidString: $0.key) }
+    }
+
+    public func hasMigratedRepos(_ projectID: UUID) -> Bool {
+        migratedRepoProjects.contains(projectID.uuidString)
+    }
+
+    public mutating func markReposMigrated(_ projectID: UUID) {
+        migratedRepoProjects.insert(projectID.uuidString)
+    }
+
+    public func hasMigratedBinding(_ projectID: UUID) -> Bool {
+        migratedBindingProjects.contains(projectID.uuidString)
+    }
+
+    public mutating func markBindingMigrated(_ projectID: UUID) {
+        migratedBindingProjects.insert(projectID.uuidString)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case bindings, migratedRepoProjects, migratedBindingProjects
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // A `HubConfig` written before these markers existed still loads —
+        // read leniently, defaulting to "nothing migrated yet under the
+        // marker scheme", not to a decode failure.
+        bindings = try container.decodeIfPresent([String: ProjectBinding].self, forKey: .bindings) ?? [:]
+        migratedRepoProjects = try container.decodeIfPresent(Set<String>.self,
+                                                              forKey: .migratedRepoProjects) ?? []
+        migratedBindingProjects = try container.decodeIfPresent(Set<String>.self,
+                                                                forKey: .migratedBindingProjects) ?? []
     }
 }

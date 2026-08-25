@@ -68,6 +68,17 @@ public final class OverlayStore {
         overlay(for: projectID).item(itemID) ?? ItemOverlay()
     }
 
+    /// Whether writes to this project's overlay are blocked because its
+    /// on-disk overlay failed to decode. Triggers the load first (as
+    /// `overlay(for:)` does) so this is accurate even before anything else
+    /// has touched this project this session — a caller like
+    /// `OverlayMigration` that needs to know WHETHER a write would be
+    /// swallowed, not just get the empty overlay back, reads this.
+    public func isUnreadable(_ projectID: UUID) -> Bool {
+        _ = overlay(for: projectID)
+        return unreadableProjects.contains(projectID)
+    }
+
     public func update(projectID: UUID, _ mutate: (inout ProjectOverlay) -> Void) {
         var overlay = overlay(for: projectID)
         mutate(&overlay)
