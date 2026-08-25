@@ -70,6 +70,16 @@ struct ProjectConnectionSection: View {
 
     @Environment(\.ainkradTheme) private var theme
 
+    /// Repos live in the overlay now, not on `Project` — read through
+    /// `store.overlay`, never `project.legacyRepos`.
+    private var repos: [AttachedRepo] { store.overlay.overlay(for: project.id).repos }
+
+    /// The connection this project is bound to, if any — read through
+    /// `HubConfig`, never `project.legacyConnectionID`.
+    private var boundConnectionID: UUID? {
+        store.overlay.hubConfig().binding(for: project.id)?.connectionID
+    }
+
     private var pendingConnectionID: UUID? {
         pendingConnectionSelection == Self.noConnection ? nil : pendingConnectionSelection
     }
@@ -91,7 +101,7 @@ struct ProjectConnectionSection: View {
         }
         AinkradSectionFrame(title: "Repos") {
             VStack(alignment: .leading, spacing: AinkradSpacing.md) {
-                ForEach(project.repos) { repo in
+                ForEach(repos) { repo in
                     repoRow(repo)
                 }
                 attachForm
@@ -121,7 +131,7 @@ struct ProjectConnectionSection: View {
             Text("No connections yet. Add one under Connections to bind this project.")
                 .font(.caption)
                 .foregroundStyle(theme.foreground.opacity(0.7))
-        } else if let connectionID = project.connectionID,
+        } else if let connectionID = boundConnectionID,
                   let connection = registry.connection(connectionID) {
             AinkradFormRow(title: "Bound to",
                           help: "\(connection.provider.rawValue) · \(connection.accountLabel)") {

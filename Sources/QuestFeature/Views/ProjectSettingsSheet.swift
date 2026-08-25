@@ -189,11 +189,12 @@ struct ProjectSettingsSheet: View {
             draft.statusScheme = current
         }
         // ProjectConnectionSection above commits a bind or repo attach directly
-        // through the store, immediately — same hazard as `statusScheme` above,
-        // for the same reason. Refresh `connectionID`/`remoteProjectKey`/`repos`
-        // from the store right before saving, or this write silently reverts a
-        // bind/attach the user just made while the sheet was open.
-        draft = store.mergingLiveConnectionFields(into: draft)
+        // through `store.overlay`/`HubConfig`, immediately — but M2A moved
+        // those fields OUT of `Project` entirely, so `draft` (a plain
+        // `Project`) can no longer carry a stale copy of them, and there is
+        // nothing here left to refresh before writing it back. The hazard
+        // `mergingLiveConnectionFields` used to guard against is gone by
+        // construction, not by this call.
         do {
             try store.updateProject(draft, actor: .user)
             // LAST statement on this path — everything after it would run in an

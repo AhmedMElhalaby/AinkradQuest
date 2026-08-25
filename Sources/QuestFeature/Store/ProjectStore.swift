@@ -25,6 +25,12 @@ public final class ProjectStore {
     public private(set) var revision: Int = 0
 
     private let repository: any ProjectRepository
+    /// Where binding/repo data now lives, since M2A moved it out of the
+    /// project document. Built from the SAME repository as this store, so the
+    /// two never disagree about which documents they are reading. Public so
+    /// callers that used to read `Project.connectionID`/`.repos` directly
+    /// (views, `severBindings` callers) can reach the new source of truth.
+    public let overlay: OverlayStore
     /// Open documents, cached so repeated reads do not re-decode.
     /// `internal` (not `private`) so Task 7's item API, added as an
     /// `extension ProjectStore` in another file in this module, can reach it.
@@ -34,6 +40,7 @@ public final class ProjectStore {
 
     public init(repository: any ProjectRepository) {
         self.repository = repository
+        self.overlay = OverlayStore(repository: repository)
         let index = repository.loadIndex()
         let live = index.filter { !$0.isTrashed }.map { summary -> ProjectSummary in
             var summary = summary

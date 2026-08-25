@@ -16,13 +16,12 @@ public struct Project: Codable, Sendable, Identifiable, Hashable {
     public var createdAt: Date
     public var updatedAt: Date
     public var archivedAt: Date?
-    /// The connection this project is bound to, or `nil` for a native project.
-    /// One connection per project — never a global app setting.
-    public var connectionID: UUID?
-    /// The provider's own key for this project ("QST", a Linear team id, a
-    /// GitHub Projects node id). Meaningless without `connectionID`.
-    public var remoteProjectKey: String?
-    public var repos: [AttachedRepo]
+    /// PRE-M2 storage, still decoded so a rollback finds its data, never
+    /// written by new code. The live values live in `OverlayStore` /
+    /// `HubConfig`; read those, not these.
+    public var legacyRepos: [AttachedRepo]
+    public var legacyConnectionID: UUID?
+    public var legacyRemoteProjectKey: String?
 
     public init(id: UUID, name: String, kind: ProjectKind,
                 summaryText: String = "", icon: String = "folder",
@@ -43,9 +42,9 @@ public struct Project: Codable, Sendable, Identifiable, Hashable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.archivedAt = archivedAt
-        self.connectionID = connectionID
-        self.remoteProjectKey = remoteProjectKey
-        self.repos = repos
+        self.legacyConnectionID = connectionID
+        self.legacyRemoteProjectKey = remoteProjectKey
+        self.legacyRepos = repos
     }
 
     public var summary: ProjectSummary {
@@ -56,7 +55,9 @@ public struct Project: Codable, Sendable, Identifiable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case id, name, summaryText, icon, colorToken, kind, state, statusScheme,
              links, createdAt, updatedAt, archivedAt,
-             connectionID, remoteProjectKey, repos
+             legacyConnectionID = "connectionID",
+             legacyRemoteProjectKey = "remoteProjectKey",
+             legacyRepos = "repos"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -74,9 +75,9 @@ public struct Project: Codable, Sendable, Identifiable, Hashable {
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
         // Written before the hub existed: unbound, no repos.
-        connectionID = try container.decodeIfPresent(UUID.self, forKey: .connectionID)
-        remoteProjectKey = try container.decodeIfPresent(String.self, forKey: .remoteProjectKey)
-        repos = try container.decodeIfPresent([AttachedRepo].self, forKey: .repos) ?? []
+        legacyConnectionID = try container.decodeIfPresent(UUID.self, forKey: .legacyConnectionID)
+        legacyRemoteProjectKey = try container.decodeIfPresent(String.self, forKey: .legacyRemoteProjectKey)
+        legacyRepos = try container.decodeIfPresent([AttachedRepo].self, forKey: .legacyRepos) ?? []
     }
 }
 
