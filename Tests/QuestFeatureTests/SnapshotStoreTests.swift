@@ -90,6 +90,59 @@ struct SnapshotStoreTests {
         #expect(overlay.overlay(for: projectID).notes == "from the backup")
     }
 
+    @Test("restore is refused, not half-applied, when a project's live overlay is corrupt")
+    func restoreBlockedByCorruptLiveOverlay() throws {
+        let documents = MemoryDocumentStore()
+        let corrupt = UUID()
+        let healthy = UUID()
+        documents.setData(Data("{not json".utf8),
+                          forKey: DocumentProjectRepository.overlayKey(corrupt))
+        let overlay = OverlayStore(repository: DocumentProjectRepository(documents: documents))
+        _ = overlay.overlay(for: corrupt) // triggers the corrupt load
+        _ = overlay.update(projectID: healthy) { $0.notes = "should survive untouched" }
+        let store = SnapshotStore(overlay: overlay, documents: MemoryDocumentStore(),
+                                  projectIDs: { [corrupt, healthy] })
+
+        var restoredHealthy = ProjectOverlay(projectID: healthy)
+        restoredHealthy.notes = "from the backup — must NOT land"
+        var restoredCorrupt = ProjectOverlay(projectID: corrupt)
+        restoredCorrupt.notes = "from the backup"
+        let snapshot = OverlaySnapshot(takenAt: Date(timeIntervalSince1970: 1),
+                                       overlays: [restoredCorrupt, restoredHealthy],
+                                       linkMap: LinkMap(), migratedRepoProjects: [],
+                                       migratedBindingProjects: [])
+
+        #expect(throws: SnapshotError.restoreBlocked([corrupt])) {
+            try store.apply(snapshot)
+        }
+        // BLOCKER 3/MAJOR 5: refusing must leave EVERY project exactly as it
+        // was — not just the corrupt one — because the failure is detected
+        // before the loop starts, so nothing is half-applied.
+        #expect(overlay.overlay(for: healthy).notes == "should survive untouched")
+    }
+
+    @Test("discarding a corrupt overlay clears the block so a later restore can land")
+    func discardThenRestoreSucceeds() throws {
+        let documents = MemoryDocumentStore()
+        let corrupt = UUID()
+        documents.setData(Data("{not json".utf8),
+                          forKey: DocumentProjectRepository.overlayKey(corrupt))
+        let overlay = OverlayStore(repository: DocumentProjectRepository(documents: documents))
+        _ = overlay.overlay(for: corrupt)
+        let store = SnapshotStore(overlay: overlay, documents: MemoryDocumentStore(),
+                                  projectIDs: { [corrupt] })
+        var restored = ProjectOverlay(projectID: corrupt)
+        restored.notes = "from the backup"
+        let snapshot = OverlaySnapshot(takenAt: Date(timeIntervalSince1970: 1),
+                                       overlays: [restored], linkMap: LinkMap(),
+                                       migratedRepoProjects: [], migratedBindingProjects: [])
+
+        overlay.removeOverlay(for: corrupt) // the discard action wired in QuestSettingsView
+        try store.apply(snapshot)
+
+        #expect(overlay.overlay(for: corrupt).notes == "from the backup")
+    }
+
     @Test("restoring a snapshot from a newer Quest is refused, not half-applied")
     func refusesNewerVersion() {
         let overlay = makeOverlay()

@@ -72,17 +72,6 @@ public final class SnapshotStore {
         FolderBookmark.grant(forKey: FolderBookmark.vaultRootKey, in: documents)
     }
 
-    /// Saves a newly chosen vault root. Same "internal, `FolderBookmark` stays
-    /// hidden" reasoning as `vaultGrant()` — the settings view picks a folder
-    /// but never touches `FolderBookmark` or `documents` directly.
-    func saveVaultGrant(_ url: URL) throws {
-        try FolderBookmark.save(url, forKey: FolderBookmark.vaultRootKey, in: documents)
-    }
-
-    func clearVaultGrant() {
-        FolderBookmark.clear(forKey: FolderBookmark.vaultRootKey, in: documents)
-    }
-
     /// Collects every project's overlay plus the link map and the migration
     /// markers. Bindings are deliberately excluded — see `OverlaySnapshot`.
     func buildSnapshot(at date: Date) -> OverlaySnapshot {
@@ -185,16 +174,32 @@ public final class SnapshotStore {
 
     /// Replaces the live overlay with the snapshot's.
     ///
-    /// The version check happens FIRST and throws before anything is written: a
-    /// half-applied restore destroys the very data the user was trying to
-    /// recover. Bindings are never written back — routing belongs to this
-    /// machine, not to the backup.
+    /// Two guards run FIRST and throw before anything is written, so a
+    /// restore never half-applies:
+    /// - the version check (a snapshot from a newer Quest is refused outright)
+    /// - a scan for any project in the snapshot whose LIVE overlay is
+    ///   currently unreadable — writing over corrupt bytes would destroy them,
+    ///   and `OverlayStore.update` already refuses that write and returns
+    ///   `false`, which used to be silently discarded here (BLOCKER 3):
+    ///   `apply` returned normally, the caller reported success, and the
+    ///   corrupt project was left exactly as corrupt as before.
+    ///
+    /// Because every failure is detected before the loop starts, the loop
+    /// itself cannot fail partway through — there is no rollback to write
+    /// because there is nothing to roll back.
+    ///
+    /// Bindings are never written back — routing belongs to this machine, not
+    /// to the backup.
     func apply(_ snapshot: OverlaySnapshot) throws {
         guard snapshot.version <= OverlaySnapshot.currentVersion else {
             throw SnapshotError.unsupportedVersion(snapshot.version)
         }
+        let blocked = snapshot.overlays.map(\.projectID).filter { overlay.isUnreadable($0) }
+        guard blocked.isEmpty else {
+            throw SnapshotError.restoreBlocked(blocked)
+        }
         for overlayDocument in snapshot.overlays {
-            _ = overlay.update(projectID: overlayDocument.projectID) { current in
+            overlay.update(projectID: overlayDocument.projectID) { current in
                 current = overlayDocument
             }
         }

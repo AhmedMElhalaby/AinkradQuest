@@ -6,6 +6,11 @@ public enum SnapshotError: Error, Equatable, Sendable {
     case writeFailed(String)
     case unreadable(String)
     case unsupportedVersion(Int)
+    /// Restore was refused before touching anything: at least one project in
+    /// the snapshot maps onto a currently-unreadable overlay, and writing
+    /// over it would destroy the corrupt bytes a human might still salvage.
+    /// Checked BEFORE any project is replaced, so a restore never half-lands.
+    case restoreBlocked([UUID])
 
     /// Written to be read by a person AND by the assistant, matching
     /// `QuestError.message`'s style.
@@ -25,6 +30,11 @@ public enum SnapshotError: Error, Equatable, Sendable {
         case .unsupportedVersion(let version):
             "That backup was written by a newer version of Quest (format \(version)). "
                 + "Update Quest to restore it."
+        case .restoreBlocked(let ids):
+            "Restore did not run: \(ids.count) project\(ids.count == 1 ? "" : "s") in this backup "
+                + "could not be restored because its current overlay is corrupt. "
+                + "Discard the corrupt overlay in Quest's settings, then restore again. "
+                + "Nothing was changed."
         }
     }
 }
