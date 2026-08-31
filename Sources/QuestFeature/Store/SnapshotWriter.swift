@@ -6,6 +6,13 @@ public enum SnapshotError: Error, Equatable, Sendable {
     case writeFailed(String)
     case unreadable(String)
     case unsupportedVersion(Int)
+    /// MINOR 7: rotation sorts by filename, i.e. by wall-clock at write time.
+    /// A backwards clock adjustment can make a snapshot JUST written sort
+    /// oldest and be deleted by the very `rotate` call that follows its own
+    /// write. Thrown when the file this write produced is gone after
+    /// rotating, so `snapshotNow` reports failure instead of `true` for a
+    /// backup that no longer exists.
+    case rotatedAwayImmediately
     /// Restore was refused before touching anything: at least one project in
     /// the snapshot maps onto a currently-unreadable overlay, and writing
     /// over it would destroy the corrupt bytes a human might still salvage.
@@ -30,6 +37,9 @@ public enum SnapshotError: Error, Equatable, Sendable {
         case .unsupportedVersion(let version):
             "That backup was written by a newer version of Quest (format \(version)). "
                 + "Update Quest to restore it."
+        case .rotatedAwayImmediately:
+            "The backup was written but then immediately deleted by cleanup — this can happen after "
+                + "a system clock change. Check your Mac's date and time, then back up again."
         case .restoreBlocked(let ids):
             "Restore did not run: \(ids.count) project\(ids.count == 1 ? "" : "s") in this backup "
                 + "could not be restored because its current overlay is corrupt. "

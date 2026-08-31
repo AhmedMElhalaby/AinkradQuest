@@ -115,17 +115,32 @@ public final class SnapshotStore {
         }
 
         let snapshot = buildSnapshot(at: date)
+        // MINOR 8: tracks whether the closure ran at all, so the branch below
+        // can tell "access itself was lost between vaultGrant() and here" —
+        // for which `lastError` must be set to the CURRENT reason,
+        // unconditionally — apart from "the closure ran and already set a
+        // more specific `lastError` itself."
+        var accessAttempted = false
         let written = FolderBookmark.withAccess(forKey: FolderBookmark.vaultRootKey,
                                                 in: documents) { root -> Bool in
+            accessAttempted = true
             do {
                 let directory = root.appendingPathComponent(SnapshotWriter.directoryName,
                                                             isDirectory: true)
                 try FileManager.default.createDirectory(at: directory,
                                                         withIntermediateDirectories: true)
-                try SnapshotWriter.write(snapshot, into: directory)
+                let writtenURL = try SnapshotWriter.write(snapshot, into: directory)
                 // Rotation runs only AFTER a successful write, so a failed
                 // write never costs the user an existing backup.
                 try SnapshotWriter.rotate(in: directory)
+                // MINOR 7: rotation sorts by filename (wall-clock at write
+                // time). A backwards clock adjustment can make the file just
+                // written sort oldest and be deleted by this very rotate —
+                // confirm it still exists rather than report success for a
+                // backup that is already gone.
+                guard FileManager.default.fileExists(atPath: writtenURL.path) else {
+                    throw SnapshotError.rotatedAwayImmediately
+                }
                 return true
             } catch let failure as SnapshotError {
                 lastError = failure.message
@@ -137,7 +152,12 @@ public final class SnapshotStore {
         }
 
         guard written == true else {
-            if lastError == nil {
+            // MINOR 8: if the closure never even ran, access was lost between
+            // `vaultGrant()` above and this call — set the CURRENT reason
+            // unconditionally. The old code only set `lastError` "if it was
+            // still nil", so a previous attempt's stale message stayed
+            // displayed instead of the real, current one.
+            if !accessAttempted {
                 lastError = SnapshotError.vaultUnresolvable(nil).message
             }
             return false

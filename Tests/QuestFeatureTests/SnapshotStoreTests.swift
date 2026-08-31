@@ -185,6 +185,47 @@ struct SnapshotStoreTests {
         #expect(overlay.hubConfig().hasMigratedRepos(projectID))
     }
 
+    @Test("a backwards clock that would rotate away the just-written snapshot is reported as failure (MINOR 7)")
+    func rotatedAwayImmediatelyIsReported() throws {
+        let documents = MemoryDocumentStore()
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("quest-snap-clock-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        do {
+            try FolderBookmark.save(folder, forKey: FolderBookmark.vaultRootKey, in: documents)
+        } catch {
+            withKnownIssue("""
+                Cannot exercise real security-scoped bookmarks in this test \
+                environment: \(error).
+                """) {
+                throw error
+            }
+            return
+        }
+
+        let snapshotsDir = folder.appendingPathComponent(SnapshotWriter.directoryName, isDirectory: true)
+        try FileManager.default.createDirectory(at: snapshotsDir, withIntermediateDirectories: true)
+        // Five snapshots dated far in the FUTURE relative to the write below —
+        // simulating a clock that was set forward and is now corrected
+        // backward for the new write.
+        for offset in 0..<5 {
+            let future = Date(timeIntervalSince1970: 2_000_000_000 + Double(offset))
+            try SnapshotWriter.write(OverlaySnapshot(takenAt: future, overlays: [], linkMap: LinkMap(),
+                                                     migratedRepoProjects: [], migratedBindingProjects: []),
+                                     into: snapshotsDir)
+        }
+
+        let store = SnapshotStore(overlay: makeOverlay(), documents: documents, projectIDs: { [] })
+        // Sorts oldest by filename among the six on disk and is deleted by
+        // `rotate` (keep = 5) the moment after `snapshotNow` writes it.
+        let wrote = store.snapshotNow(at: Date(timeIntervalSince1970: 1_000_000_000))
+
+        #expect(wrote == false)
+        #expect(store.lastError?.isEmpty == false)
+    }
+
     @Test("a fresh store with snapshots already on disk reports an age, not never (BLOCKER 2)")
     func lastBackupAtReadsFromDisk() throws {
         let documents = MemoryDocumentStore()
