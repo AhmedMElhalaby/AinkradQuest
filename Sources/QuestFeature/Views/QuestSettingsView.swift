@@ -55,6 +55,19 @@ struct QuestSettingsView: View {
     /// `BackupSettings`' two inner `AinkradSectionFrame` boxes.
     @State private var pendingRestore: SnapshotFile?
     @State private var restoreError: String?
+    /// The project whose corrupt overlay is awaiting a confirmed discard —
+    /// hoisted to this root the same way `pendingRestore` is: this is a
+    /// destructive action (`OverlayStore.removeOverlay`) and needs the
+    /// confirm dialog presented from the settings root, not a narrow section
+    /// box. This is the exit `OverlayHealth.writeBlocked`'s own message
+    /// promises ("discard it to start fresh") but that, before this fix, had
+    /// no UI path to reach.
+    @State private var pendingDiscard: UUID?
+    /// The vault grant awaiting a confirmed clear (ADDITION A). Clearing it
+    /// silently turns off the only protection the overlay has, so it gets the
+    /// same treatment as restore/discard — hoisted here rather than presented
+    /// from `rootRow` itself, for the identical clipping reason.
+    @State private var pendingClearVaultGrant = false
 
     init(presentation: any PluginPresentationControl, documents: PluginDocumentStore,
          store: ProjectStore, registry: ConnectionRegistry, snapshots: SnapshotStore) {
@@ -90,6 +103,21 @@ struct QuestSettingsView: View {
 
             BackupSettings(snapshots: snapshots, pendingRestore: $pendingRestore,
                            restoreError: $restoreError)
+
+            if !store.overlay.health.affectedProjects.isEmpty {
+                AinkradSectionFrame(title: "Corrupt overlays") {
+                    VStack(alignment: .leading, spacing: AinkradSpacing.md) {
+                        caption("These projects' saved notes could not be read. Restore from a backup above, or discard to start fresh with an empty overlay.")
+                        ForEach(Array(store.overlay.health.affectedProjects), id: \.self) { projectID in
+                            AinkradFormRow(title: projectName(projectID), help: "Overlay could not be read.") {
+                                AinkradButton(title: "Discard…", style: .danger) {
+                                    pendingDiscard = projectID
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             AinkradSectionFrame(title: "Folder grants") {
                 VStack(alignment: .leading, spacing: AinkradSpacing.md) {
@@ -152,6 +180,50 @@ struct QuestSettingsView: View {
             }
             pendingRestore = nil
         }
+        // Discarding a corrupt overlay replaces it with nothing — irreversible
+        // by definition, since the whole reason it is offered is that the
+        // bytes could not be read in the first place. Same hoisting reasoning
+        // as `pendingRestore`.
+        .ainkradConfirmDialog(isPresented: Binding(get: { pendingDiscard != nil },
+                                                   set: { if !$0 { pendingDiscard = nil } }),
+                              title: "Discard this project's notes?",
+                              message: pendingDiscard.map {
+                                  "\(projectName($0))'s saved notes could not be read and cannot be recovered from here. "
+                                      + "Discarding replaces them with an empty overlay so you can start fresh, "
+                                      + "or restore from a backup above instead. This cannot be undone."
+                              } ?? "",
+                              confirmTitle: "Discard",
+                              isDestructive: true) {
+            if let projectID = pendingDiscard {
+                store.overlay.removeOverlay(for: projectID)
+            }
+            pendingDiscard = nil
+        }
+        // ADDITION A: clearing the vault grant silently turns off the only
+        // protection the overlay has — the age indicator would then quietly
+        // report a backup that stopped, which is the exact failure this
+        // milestone exists to prevent. Confirmed here, at the root, for the
+        // same clipping reason as the two dialogs above. The PROJECTS grant
+        // deliberately gets no such confirm — see `clearRoot`.
+        .ainkradConfirmDialog(isPresented: $pendingClearVaultGrant,
+                              title: "Turn off backups?",
+                              message: "Clearing the vault folder stops Quest from backing up your "
+                                  + "notes, personal priority and time entries. Existing backups in "
+                                  + "that folder are not deleted, but no new ones will be written "
+                                  + "until you grant a vault folder again.",
+                              confirmTitle: "Clear",
+                              isDestructive: true) {
+            FolderBookmark.clear(forKey: FolderBookmark.vaultRootKey, in: documents)
+            grantRevision += 1
+        }
+    }
+
+    /// A best-effort display name for a project id that may no longer be in
+    /// `store.projects`/`trashedProjects` (e.g. already purged) — falls back
+    /// to a shortened id rather than crashing or showing nothing.
+    private func projectName(_ projectID: UUID) -> String {
+        (store.projects + store.trashedProjects).first { $0.id == projectID }?.name
+            ?? "Project \(projectID.uuidString.prefix(8))"
     }
 
     private func performRestore(_ file: SnapshotFile) {
@@ -229,6 +301,15 @@ struct QuestSettingsView: View {
     }
 
     private func clearRoot(key: String) {
+        // The vault grant drives backups now (ADDITION A) — clearing it must
+        // be confirmed, unlike the projects grant, which still only feeds
+        // creation-time suggestions and costs nothing to clear. A confirm on
+        // the projects grant too would just be noise that teaches the user to
+        // click through the one that matters.
+        if key == FolderBookmark.vaultRootKey {
+            pendingClearVaultGrant = true
+            return
+        }
         FolderBookmark.clear(forKey: key, in: documents)
         grantRevision += 1
     }
