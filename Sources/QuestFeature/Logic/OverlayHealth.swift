@@ -6,31 +6,61 @@ import Foundation
 /// message text, and any later successful write cleared it — so a warning about
 /// an unresolved problem could vanish before the user acted on it. A surface
 /// that must disable editing needs to ask a question, not parse prose.
+///
+/// `.unreadable`/`.writeBlocked` carry a SET of project ids, not a single one:
+/// a second corrupt project used to overwrite the first, so a cockpit asking
+/// "is project X editable?" could not answer correctly from this type alone
+/// and had to fall back to `OverlayStore.isUnreadable(_:)`. The set makes the
+/// per-project question answerable here directly, via `isReadOnly(_:)`.
 public enum OverlayHealth: Equatable, Sendable {
     case healthy
-    /// A project's overlay document exists but could not be decoded. Writes for
-    /// it are blocked so the corrupt bytes are not overwritten with empty state.
-    case unreadable(UUID)
-    /// A write was refused because that project is unreadable.
-    case writeBlocked(UUID)
-    /// An ordinary write failure. Retryable, unlike the two above.
+    /// Project overlay documents that exist but could not be decoded. Writes
+    /// for them are blocked so the corrupt bytes are not overwritten with
+    /// empty state.
+    case unreadable(Set<UUID>)
+    /// Writes were refused because these projects are unreadable.
+    case writeBlocked(Set<UUID>)
+    /// An ordinary write failure. Retryable, unlike the two above, and not
+    /// scoped to a single project.
     case writeFailed(String)
 
-    /// Whether editing should be disabled. Only an unreadable overlay is
-    /// genuinely read-only; a failed write keeps the change in memory and can
-    /// be retried.
+    /// Whether THIS project's editing should be disabled. Only an unreadable
+    /// overlay is genuinely read-only; a failed write keeps the change in
+    /// memory and can be retried.
+    public func isReadOnly(_ projectID: UUID) -> Bool {
+        switch self {
+        case .unreadable(let ids), .writeBlocked(let ids): ids.contains(projectID)
+        case .healthy, .writeFailed: false
+        }
+    }
+
+    /// Whether ANY project is currently read-only because of this state.
+    /// `healthy`/`writeFailed` stay non-project-scoped, as before.
     public var isReadOnly: Bool {
         switch self {
-        case .unreadable, .writeBlocked: true
+        case .unreadable(let ids), .writeBlocked(let ids): !ids.isEmpty
         case .healthy, .writeFailed: false
+        }
+    }
+
+    /// Every project id this state concerns. Empty for `.healthy`/`.writeFailed`.
+    public var affectedProjects: Set<UUID> {
+        switch self {
+        case .unreadable(let ids), .writeBlocked(let ids): ids
+        case .healthy, .writeFailed: []
         }
     }
 
     public var message: String? {
         switch self {
         case .healthy: nil
-        case .unreadable(let id):
-            QuestError.overlayCorrupt(id).message
+        case .unreadable(let ids):
+            if ids.count == 1, let only = ids.first {
+                QuestError.overlayCorrupt(only).message
+            } else {
+                "\(ids.count) projects' saved notes could not be read and were not overwritten. "
+                    + "Restore them from a backup, or discard each to start fresh."
+            }
         case .writeBlocked:
             "That project's saved notes could not be read, so nothing new was saved over them. "
                 + "Restore it from a backup in Quest's settings, or discard it to start fresh."

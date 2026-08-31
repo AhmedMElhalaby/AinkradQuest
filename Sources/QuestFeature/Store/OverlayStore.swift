@@ -41,6 +41,12 @@ public final class OverlayStore {
     /// the corrupt document with nothing, or by a later successful load
     /// after the underlying bytes are fixed out of band.
     private var unreadableProjects: Set<UUID> = []
+    /// Projects whose most recent write was refused because they are
+    /// unreadable. Tracked separately from `unreadableProjects` so
+    /// `removeOverlay` can shrink each set independently rather than
+    /// collapsing `.writeBlocked` straight to `.healthy` while another
+    /// project is still unreadable.
+    private var writeBlockedProjects: Set<UUID> = []
     private var map: LinkMap
     private var config: HubConfig
 
@@ -65,7 +71,7 @@ public final class OverlayStore {
             unreadableProjects.insert(projectID)
             persistenceFailure = "Your notes and priorities could not be read: "
                 + ((error as? QuestError)?.message ?? String(describing: error))
-            health = .unreadable(projectID)
+            health = .unreadable(unreadableProjects)
             let empty = ProjectOverlay(projectID: projectID)
             overlays[projectID] = empty
             return empty
@@ -116,9 +122,15 @@ public final class OverlayStore {
     public func removeOverlay(for projectID: UUID) {
         overlays.removeValue(forKey: projectID)
         unreadableProjects.remove(projectID)
+        writeBlockedProjects.remove(projectID)
         repository.removeOverlay(projectID)
-        if health == .unreadable(projectID) || health == .writeBlocked(projectID) {
-            health = .healthy
+        switch health {
+        case .unreadable:
+            health = unreadableProjects.isEmpty ? .healthy : .unreadable(unreadableProjects)
+        case .writeBlocked:
+            health = writeBlockedProjects.isEmpty ? .healthy : .writeBlocked(writeBlockedProjects)
+        case .healthy, .writeFailed:
+            break
         }
         revision += 1
     }
@@ -147,7 +159,8 @@ public final class OverlayStore {
             revision += 1
             persistenceFailure = "This project's overlay could not be read, so the change "
                 + "was not saved. Restore or remove the corrupt overlay before editing it again."
-            health = .writeBlocked(overlay.projectID)
+            writeBlockedProjects.insert(overlay.projectID)
+            health = .writeBlocked(writeBlockedProjects)
             return false
         }
         overlays[overlay.projectID] = overlay
