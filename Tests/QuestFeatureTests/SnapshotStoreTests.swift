@@ -185,6 +185,43 @@ struct SnapshotStoreTests {
         #expect(overlay.hubConfig().hasMigratedRepos(projectID))
     }
 
+    @Test("a fresh store with snapshots already on disk reports an age, not never (BLOCKER 2)")
+    func lastBackupAtReadsFromDisk() throws {
+        let documents = MemoryDocumentStore()
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("quest-snap-age-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        do {
+            try FolderBookmark.save(folder, forKey: FolderBookmark.vaultRootKey, in: documents)
+        } catch {
+            withKnownIssue("""
+                Cannot exercise real security-scoped bookmarks in this test \
+                environment: \(error).
+                """) {
+                throw error
+            }
+            return
+        }
+
+        let snapshotsDir = folder.appendingPathComponent(SnapshotWriter.directoryName, isDirectory: true)
+        try FileManager.default.createDirectory(at: snapshotsDir, withIntermediateDirectories: true)
+        let taken = Date(timeIntervalSince1970: 1_756_000_000)
+        try SnapshotWriter.write(OverlaySnapshot(takenAt: taken, overlays: [], linkMap: LinkMap(),
+                                                 migratedRepoProjects: [], migratedBindingProjects: []),
+                                 into: snapshotsDir)
+
+        // A FRESH store: `lastSnapshotAt` was never set in-memory this
+        // session, which is exactly the post-relaunch state that used to
+        // render "Never backed up" above a restore list showing real dated
+        // snapshots.
+        let store = SnapshotStore(overlay: makeOverlay(), documents: documents, projectIDs: { [] })
+
+        #expect(store.lastSnapshotAt == nil)
+        #expect(store.lastBackupAt() == taken)
+    }
+
     @Test("a directory with one good snapshot and one garbage file lists both, one restorable one damaged")
     func listingSurfacesDamagedSnapshots() throws {
         let documents = MemoryDocumentStore()

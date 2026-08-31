@@ -68,6 +68,18 @@ struct BackupSettings: View {
     /// Bumped after Choose…/Back up now/restore so the grant and the restore
     /// list are re-read. Same shape as `QuestSettingsView.grantRevision`.
     @State private var revision = 0
+    /// Memoized `listSnapshots()` result (MAJOR 4). `rootRow`'s own doc
+    /// comment states rendering must never acquire a scoped resource, and
+    /// `listSnapshots()` enters `FolderBookmark.withAccess` plus a directory
+    /// enumeration and up to `SnapshotWriter.keep` JSON decodes — calling it
+    /// directly in `body` did that on every single body pass. Recomputed only
+    /// in `refreshEntries()`, driven by `revision`, matching how `grantRow`
+    /// re-reads the grant on the same signal.
+    @State private var cachedEntries: [SnapshotEntry] = []
+    /// The displayed age (BLOCKER 2), derived from `cachedEntries` rather than
+    /// calling `snapshots.lastBackupAt()` (which itself calls `listSnapshots()`)
+    /// directly in `body` — same scoped-resource-in-render concern as above.
+    @State private var cachedAge: Date?
 
     var body: some View {
         VStack(alignment: .leading, spacing: AinkradSpacing.md) {
@@ -77,7 +89,7 @@ struct BackupSettings: View {
 
                     grantRow
 
-                    AinkradFormRow(title: "Last backup", help: SnapshotAge.describe(snapshots.lastSnapshotAt)) {
+                    AinkradFormRow(title: "Last backup", help: SnapshotAge.describe(cachedAge)) {
                         AinkradButton(title: "Back up now", style: .secondary) { backUpNow() }
                     }
 
@@ -89,11 +101,10 @@ struct BackupSettings: View {
 
             AinkradSectionFrame(title: "Restore") {
                 VStack(alignment: .leading, spacing: AinkradSpacing.md) {
-                    let entries = snapshots.listSnapshots()
-                    if entries.isEmpty {
+                    if cachedEntries.isEmpty {
                         caption("No backups yet.")
                     } else {
-                        ForEach(entries) { entry in
+                        ForEach(cachedEntries) { entry in
                             restoreRow(entry)
                         }
                     }
@@ -113,6 +124,23 @@ struct BackupSettings: View {
             // grant/list/age so the UI reflects what just happened.
             if old != nil && new == nil { revision += 1 }
         }
+        // Loads the memoized list/age once on first appearance...
+        .onAppear { refreshEntries() }
+        // ...and again whenever something that could have changed the vault's
+        // contents bumps `revision` (Back up now, a resolved restore).
+        .onChange(of: revision) { _, _ in refreshEntries() }
+    }
+
+    /// The ONLY place `listSnapshots()`/`lastBackupAt()` are called — never
+    /// from `body` (MAJOR 4). Runs from `.onAppear`/`.onChange`, not from a
+    /// render pass, so acquiring the vault's scoped resource here is fine.
+    private func refreshEntries() {
+        cachedEntries = snapshots.listSnapshots()
+        let onDisk = cachedEntries.compactMap { entry -> Date? in
+            if case .readable(let file) = entry { return file.takenAt }
+            return nil
+        }.max()
+        cachedAge = [snapshots.lastSnapshotAt, onDisk].compactMap { $0 }.max()
     }
 
     // MARK: - Grant state

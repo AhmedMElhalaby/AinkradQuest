@@ -54,6 +54,22 @@ public final class SnapshotStore {
     /// Why the last attempt failed, in `.message` form. Never `localizedDescription`.
     public private(set) var lastError: String?
 
+    /// The age indicator's actual source of truth (BLOCKER 2). `lastSnapshotAt`
+    /// is in-memory only, so on every relaunch it reads `nil` and the UI said
+    /// "Never backed up" directly above a restore list showing five real
+    /// dated snapshots — self-contradictory, and it defeats the one indicator
+    /// this design relies on to catch a silently-stopped backup. This derives
+    /// the DISPLAYED age from the newest `.readable` entry actually on disk,
+    /// falling back to `lastSnapshotAt` so a backup just written this session
+    /// (not yet re-listed) still reads as fresh even if listing lags.
+    public func lastBackupAt() -> Date? {
+        let onDisk = listSnapshots().compactMap { entry -> Date? in
+            if case .readable(let file) = entry { return file.takenAt }
+            return nil
+        }.max()
+        return [lastSnapshotAt, onDisk].compactMap { $0 }.max()
+    }
+
     private let overlay: OverlayStore
     private let documents: any PluginDocumentStore
     private let projectIDs: () -> [UUID]
