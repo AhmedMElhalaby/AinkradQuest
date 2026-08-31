@@ -185,6 +185,122 @@ struct SnapshotStoreTests {
         #expect(overlay.hubConfig().hasMigratedRepos(projectID))
     }
 
+    @Test("tick() does not snapshot before startAutoBackup is called (BLOCKER 1)")
+    func tickWithoutStartIsANoOp() throws {
+        let documents = MemoryDocumentStore()
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("quest-snap-cadence-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        do {
+            try FolderBookmark.save(folder, forKey: FolderBookmark.vaultRootKey, in: documents)
+        } catch {
+            withKnownIssue("""
+                Cannot exercise real security-scoped bookmarks in this test \
+                environment: \(error).
+                """) { throw error }
+            return
+        }
+
+        let overlay = makeOverlay()
+        let projectID = UUID()
+        _ = overlay.update(projectID: projectID) { $0.notes = "edited before startAutoBackup" }
+        let store = SnapshotStore(overlay: overlay, documents: documents, projectIDs: { [projectID] })
+
+        // Without `startAutoBackup()`, `observedRevision`/`lastSnapshotRevision`
+        // were never seeded, so `tick()` must not write anything.
+        store.tick(now: Date(timeIntervalSince1970: 1_756_000_000 + SnapshotCadence.quietPeriod))
+
+        #expect(store.lastSnapshotAt == nil)
+    }
+
+    @Test("after startAutoBackup, an overlay change debounces into exactly one snapshot (BLOCKER 1)")
+    func autoBackupDebouncesAChange() throws {
+        let documents = MemoryDocumentStore()
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("quest-snap-cadence-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        do {
+            try FolderBookmark.save(folder, forKey: FolderBookmark.vaultRootKey, in: documents)
+        } catch {
+            withKnownIssue("""
+                Cannot exercise real security-scoped bookmarks in this test \
+                environment: \(error).
+                """) { throw error }
+            return
+        }
+
+        let overlay = makeOverlay()
+        let projectID = UUID()
+        let store = SnapshotStore(overlay: overlay, documents: documents, projectIDs: { [projectID] })
+        store.startAutoBackup()
+        let start = Date(timeIntervalSince1970: 1_756_000_000)
+
+        // No change yet: ticking must not write.
+        store.tick(now: start.addingTimeInterval(SnapshotCadence.quietPeriod))
+        #expect(store.lastSnapshotAt == nil)
+
+        _ = overlay.update(projectID: projectID) { $0.notes = "edited" }
+
+        // Still inside the quiet period after the edit: must not write yet.
+        store.tick(now: start.addingTimeInterval(SnapshotCadence.quietPeriod + 60))
+        #expect(store.lastSnapshotAt == nil)
+
+        // A burst of further edits, each observed by a tick before the
+        // quiet period elapses, must not produce multiple snapshots.
+        _ = overlay.update(projectID: projectID) { $0.notes = "edited again" }
+        store.tick(now: start.addingTimeInterval(SnapshotCadence.quietPeriod + 90))
+        #expect(store.lastSnapshotAt == nil)
+
+        // Now the overlay sits quiet for the full period: exactly one write.
+        let fireTime = start.addingTimeInterval(SnapshotCadence.quietPeriod + 90 + SnapshotCadence.quietPeriod)
+        store.tick(now: fireTime)
+        #expect(store.lastSnapshotAt == fireTime)
+
+        // A further tick with nothing changed must NOT write again — a
+        // second identical snapshot would rotate away real history.
+        store.tick(now: fireTime.addingTimeInterval(SnapshotCadence.quietPeriod))
+        #expect(store.lastSnapshotAt == fireTime)
+    }
+
+    @Test("flushOnTeardown writes a final snapshot only if something changed since the last one (BLOCKER 1)")
+    func flushOnTeardownWritesOnlyIfChanged() throws {
+        let documents = MemoryDocumentStore()
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("quest-snap-teardown-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        do {
+            try FolderBookmark.save(folder, forKey: FolderBookmark.vaultRootKey, in: documents)
+        } catch {
+            withKnownIssue("""
+                Cannot exercise real security-scoped bookmarks in this test \
+                environment: \(error).
+                """) { throw error }
+            return
+        }
+
+        let overlay = makeOverlay()
+        let projectID = UUID()
+        let store = SnapshotStore(overlay: overlay, documents: documents, projectIDs: { [projectID] })
+        store.startAutoBackup()
+
+        // Nothing changed since start: teardown must not write.
+        store.flushOnTeardown(now: Date(timeIntervalSince1970: 1))
+        #expect(store.lastSnapshotAt == nil)
+
+        // Restart the cadence (flushOnTeardown stops the timer) and make a
+        // change — teardown must now write even though the quiet period has
+        // not elapsed, since the app is going away regardless.
+        store.startAutoBackup()
+        _ = overlay.update(projectID: projectID) { $0.notes = "changed right before quitting" }
+        let now = Date(timeIntervalSince1970: 2)
+        store.flushOnTeardown(now: now)
+
+        #expect(store.lastSnapshotAt == now)
+    }
+
     @Test("a backwards clock that would rotate away the just-written snapshot is reported as failure (MINOR 7)")
     func rotatedAwayImmediatelyIsReported() throws {
         let documents = MemoryDocumentStore()

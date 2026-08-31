@@ -72,11 +72,18 @@ public struct QuestApp: AinkradApp {
     @MainActor private static func snapshotStore(for host: HostServices) -> SnapshotStore {
         snapshotStores.value(for: instance(of: host)) {
             let projectStore = store(for: host)
-            return SnapshotStore(overlay: overlay(for: host), documents: host.documents,
-                                 projectIDs: { [weak projectStore] in
-                                     guard let projectStore else { return [] }
-                                     return (projectStore.projects + projectStore.trashedProjects).map(\.id)
-                                 })
+            let snapshots = SnapshotStore(overlay: overlay(for: host), documents: host.documents,
+                                          projectIDs: { [weak projectStore] in
+                                              guard let projectStore else { return [] }
+                                              return (projectStore.projects + projectStore.trashedProjects).map(\.id)
+                                          })
+            // BLOCKER 1: the design's cadence — debounced on overlay change,
+            // roughly five minutes of quiet, plus one final write on
+            // teardown if anything changed — was never implemented. Started
+            // here, once per instance, rather than in `SnapshotStore.init`,
+            // so a store built by a test never schedules a timer of its own.
+            snapshots.startAutoBackup()
+            return snapshots
         }
     }
 
@@ -132,7 +139,14 @@ extension QuestApp: AinkradAppTeardown {
         stores.remove(instance)
         overlays.remove(instance)
         registries.remove(instance)
-        snapshotStores.remove(instance)
+        // BLOCKER 1: this is the closest thing to an "app is going away" hook
+        // a plugin gets — there is no separate process-termination signal
+        // exposed to `AinkradApp`/`HostServices`. It fires when the HOST
+        // closes this instance, which covers the window-closed case; it does
+        // NOT cover the whole process being killed out from under an open
+        // instance (force-quit, crash), which no hook here can catch. Flush
+        // BEFORE removing, while `snapshots` still has its `overlay`/timer.
+        snapshotStores.remove(instance)?.flushOnTeardown()
         // The MCP server's tool closures capture the operations layer, which
         // captures this instance's store. Leaving it registered would let the
         // assistant keep driving an app the user shut.

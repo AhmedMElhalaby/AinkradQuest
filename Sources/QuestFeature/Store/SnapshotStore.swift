@@ -74,6 +74,71 @@ public final class SnapshotStore {
     private let documents: any PluginDocumentStore
     private let projectIDs: () -> [UUID]
 
+    // MARK: - BLOCKER 1: automatic cadence
+
+    /// How often `tick()` polls `overlay.revision`. Cheap (an integer
+    /// comparison) on every tick that finds nothing changed, so a short
+    /// interval costs nothing — it is NOT how often a snapshot is written;
+    /// `SnapshotCadence.quietPeriod` governs that.
+    static let pollInterval: TimeInterval = 30
+    private var pollTimer: Timer?
+    /// `overlay.revision` as observed by the most recent `tick()`.
+    private var observedRevision: Int?
+    /// When `observedRevision` last actually changed.
+    private var lastChangeAt: Date = .distantPast
+    /// `overlay.revision` as of the last snapshot written — automatic OR
+    /// manual, so a "Back up now" click also resets the debounce clock rather
+    /// than leaving `tick()` thinking nothing has been backed up since.
+    private var lastSnapshotRevision: Int?
+
+    /// Starts the debounced cadence. Called once per `SnapshotStore` instance,
+    /// from `QuestApp`. Safe to call again — it simply replaces the timer.
+    public func startAutoBackup() {
+        observedRevision = overlay.revision
+        lastSnapshotRevision = overlay.revision
+        lastChangeAt = .distantPast
+        pollTimer?.invalidate()
+        pollTimer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+    }
+
+    /// Stops the timer without writing anything. Called from
+    /// `flushOnTeardown()` before its own final check, so the timer never
+    /// fires again after the instance is torn down.
+    public func stopAutoBackup() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+    }
+
+    /// Polls for an overlay change and, once the quiet period has elapsed
+    /// with nothing further changing, writes a debounced snapshot. Pure
+    /// decision logic lives in `SnapshotCadence`; this just supplies the
+    /// current revision/time and acts on the answer.
+    func tick(now: Date = Date()) {
+        if observedRevision != overlay.revision {
+            observedRevision = overlay.revision
+            lastChangeAt = now
+        }
+        guard SnapshotCadence.shouldSnapshot(currentRevision: overlay.revision,
+                                             lastSnapshotRevision: lastSnapshotRevision,
+                                             lastChangeAt: lastChangeAt, now: now) else { return }
+        _ = snapshotNow(at: now)
+    }
+
+    /// Called from `QuestApp.teardown(instance:)` — see that call site for
+    /// whether a genuine app-termination hook exists (it does not; this is
+    /// per-instance teardown, the closest hook available). Writes one final
+    /// snapshot if anything changed since the last one, so a session that
+    /// closes inside the five-minute quiet window is not silently lost.
+    public func flushOnTeardown(now: Date = Date()) {
+        stopAutoBackup()
+        guard SnapshotCadence.shouldSnapshotOnTeardown(currentRevision: overlay.revision,
+                                                       lastSnapshotRevision: lastSnapshotRevision)
+        else { return }
+        _ = snapshotNow(at: now)
+    }
+
     public init(overlay: OverlayStore, documents: any PluginDocumentStore,
                 projectIDs: @escaping () -> [UUID]) {
         self.overlay = overlay
@@ -164,6 +229,11 @@ public final class SnapshotStore {
         }
         lastSnapshotAt = date
         lastError = nil
+        // Resets the debounce clock (BLOCKER 1) for BOTH the automatic
+        // cadence and a manual "Back up now" click — either way, the overlay
+        // as of this revision is now backed up, so `tick()` must not fire
+        // again until something changes past this point.
+        lastSnapshotRevision = overlay.revision
         return true
     }
 
