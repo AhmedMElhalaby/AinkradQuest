@@ -39,7 +39,27 @@ public struct QuestApp: AinkradApp {
 
     @MainActor private static func overlay(for host: HostServices) -> OverlayStore {
         overlays.value(for: instance(of: host)) {
-            OverlayStore(repository: DocumentProjectRepository(documents: host.documents))
+            let store = OverlayStore(repository: DocumentProjectRepository(documents: host.documents))
+            let reporter = QuestSignalReporter(signals: host.signals)
+            // Reports the TRANSITION, not the state. Re-evaluating health on
+            // every write would otherwise re-file the same corruption
+            // endlessly; only newly-affected projects are news.
+            store.onHealthChanged = { new, old in
+                for projectID in new.affectedProjects.subtracting(old.affectedProjects) {
+                    // Resolved from ProjectStore, which is the only thing that
+                    // knows a project's NAME — OverlayStore deals in ids.
+                    // Looked up inside the closure rather than captured: this
+                    // runs long after construction, and `store(for:)` builds
+                    // the overlay store, so capturing it here would recurse.
+                    let name = Self.store(for: host).projects
+                        .first { $0.id == projectID }?.name ?? "A project"
+                    reporter.overlayUnreadable(projectName: name, projectID: projectID)
+                }
+                if case .writeFailed(let reason) = new {
+                    reporter.overlayWriteFailed(reason: reason)
+                }
+            }
+            return store
         }
     }
 
@@ -112,8 +132,18 @@ public struct QuestApp: AinkradApp {
     @MainActor static func mcpServer(for host: HostServices) -> MCPAppServer {
         mcpServers.value(for: instance(of: host)) {
             let operations = QuestMCPOperations(store: store(for: host))
+            // Every agent tool call passes through this one closure, which is
+            // what makes "the assistant changed something" reportable without
+            // touching the twenty `document.activity.append` sites. Reads are
+            // excluded by name: list_projects is not news.
+            let reporter = QuestSignalReporter(signals: host.signals)
             let (server, failures) = QuestMCPServer.make(appID: id) { operation, arguments in
-                await operations.run(operation: operation, arguments: arguments)
+                let result = await operations.run(operation: operation, arguments: arguments)
+                QuestAgentActivityReporter.report(operation: operation,
+                                                  result: result,
+                                                  store: store(for: host),
+                                                  reporter: reporter)
+                return result
             }
             // A dropped tool is a silently missing capability — say so rather
             // than let the assistant just never see it.
