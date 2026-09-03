@@ -18,7 +18,7 @@ packages:
     # which is the inherited claim that caused a day of misdiagnosis. Read the
     # truth from the host, never from this comment:
     #   git -C ../Ainkrad/build/SourcePackages/checkouts/AinkradAppKit rev-parse HEAD
-    # 60036ad9abe5d0ca4e84109bcc78a51f7b8578f0 is the CURRENT pin, verified
+    # 8944e959ddeaae2475709ae5e6ef0afd83bb0623 is the CURRENT pin, verified
     # against that command. If you change `revision:` below, re-run the command
     # above and confirm it matches before trusting the new pin.
     #
@@ -29,7 +29,7 @@ packages:
     # (`init(title:help:control:)`) no longer existed in the framework the host
     # embedded. Source compiled either way — only linking told the truth. That
     # is the failure mode this comment exists to prevent recurring.
-    revision: 60036ad9abe5d0ca4e84109bcc78a51f7b8578f0
+    revision: 8944e959ddeaae2475709ae5e6ef0afd83bb0623
 targets:
   QuestFeature:
     type: library.static

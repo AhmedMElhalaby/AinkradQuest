@@ -25,7 +25,23 @@ public final class OverlayStore {
     /// `persistenceFailure`, an unrelated successful write must NOT downgrade
     /// an unresolved `.unreadable` — only resolving that specific project's
     /// condition (a fixed load, or `removeOverlay`) clears it.
-    public private(set) var health: OverlayHealth = .healthy
+    public private(set) var health: OverlayHealth = .healthy {
+        didSet {
+            // One hook on the property rather than one at each of the six
+            // assignment sites: the rule is "when health changes", and six
+            // call sites would be six chances to add a seventh without it.
+            guard health != oldValue else { return }
+            onHealthChanged?(health, oldValue)
+        }
+    }
+
+    /// Called when `health` actually changes value. Set by `QuestApp` so the
+    /// store does not have to know what a notification is.
+    ///
+    /// Receives the OLD value too, because "became unreadable" is the event
+    /// worth reporting and "was already unreadable" is not — without the
+    /// previous value every re-evaluation would look like new news.
+    public var onHealthChanged: ((OverlayHealth, OverlayHealth) -> Void)?
     /// Bumped once per applied mutation, so a view can memoize derived work
     /// instead of recomputing on every body pass. Same contract as
     /// `ProjectStore.revision`: "in-memory state changed", not "durably saved".
