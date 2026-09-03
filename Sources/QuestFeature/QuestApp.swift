@@ -63,6 +63,30 @@ public struct QuestApp: AinkradApp {
         }
     }
 
+    /// Cached per host, the same shape as `stores`/`registries`: it holds
+    /// `lastSnapshotAt`/`lastError`, standing state the settings view must
+    /// read and mutate through the same instance, not a fresh one reloaded
+    /// on every settings open.
+    @MainActor private static let snapshotStores = PluginInstanceStorage<SnapshotStore>()
+
+    @MainActor private static func snapshotStore(for host: HostServices) -> SnapshotStore {
+        snapshotStores.value(for: instance(of: host)) {
+            let projectStore = store(for: host)
+            let snapshots = SnapshotStore(overlay: overlay(for: host), documents: host.documents,
+                                          projectIDs: { [weak projectStore] in
+                                              guard let projectStore else { return [] }
+                                              return (projectStore.projects + projectStore.trashedProjects).map(\.id)
+                                          })
+            // BLOCKER 1: the design's cadence — debounced on overlay change,
+            // roughly five minutes of quiet, plus one final write on
+            // teardown if anything changed — was never implemented. Started
+            // here, once per instance, rather than in `SnapshotStore.init`,
+            // so a store built by a test never schedules a timer of its own.
+            snapshots.startAutoBackup()
+            return snapshots
+        }
+    }
+
     public static func makeRootView(host: HostServices) -> AnyView {
         AnyView(QuestShell(store: store(for: host), registry: registry(for: host),
                           theme: host.theme, documents: host.documents))
@@ -70,7 +94,8 @@ public struct QuestApp: AinkradApp {
 
     public static func makeSettingsView(host: HostServices) -> AnyView {
         AnyView(QuestSettingsView(presentation: host.presentation, documents: host.documents,
-                                  store: store(for: host), registry: registry(for: host)))
+                                  store: store(for: host), registry: registry(for: host),
+                                  snapshots: snapshotStore(for: host)))
     }
 
     public static func chromeFill(host: HostServices) -> Color? {
@@ -114,6 +139,14 @@ extension QuestApp: AinkradAppTeardown {
         stores.remove(instance)
         overlays.remove(instance)
         registries.remove(instance)
+        // BLOCKER 1: this is the closest thing to an "app is going away" hook
+        // a plugin gets — there is no separate process-termination signal
+        // exposed to `AinkradApp`/`HostServices`. It fires when the HOST
+        // closes this instance, which covers the window-closed case; it does
+        // NOT cover the whole process being killed out from under an open
+        // instance (force-quit, crash), which no hook here can catch. Flush
+        // BEFORE removing, while `snapshots` still has its `overlay`/timer.
+        snapshotStores.remove(instance)?.flushOnTeardown()
         // The MCP server's tool closures capture the operations layer, which
         // captures this instance's store. Leaving it registered would let the
         // assistant keep driving an app the user shut.

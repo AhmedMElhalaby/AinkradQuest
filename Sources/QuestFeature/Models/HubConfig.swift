@@ -42,6 +42,14 @@ public struct HubConfig: Codable, Sendable {
     public var migratedRepoProjects: Set<String>
     public var migratedBindingProjects: Set<String>
 
+    /// How far the one-time migration scan has run.
+    ///
+    /// A GENERATION rather than a flag: if a future Quest needs to re-scan
+    /// every project for a new migration, it raises
+    /// `ProjectStore.migrationGeneration` and every store scans once more. A
+    /// boolean would have to be cleared by hand, which nobody remembers to do.
+    public var scanCompleteThrough: Int = 0
+
     public init() {
         bindings = [:]
         migratedRepoProjects = []
@@ -86,8 +94,28 @@ public struct HubConfig: Codable, Sendable {
         migratedBindingProjects.insert(projectID.uuidString)
     }
 
+    /// Clears both migration markers for a project.
+    ///
+    /// Called when a project is PURGED — the markers describe work done on a
+    /// document that no longer exists, and a project restored later from a
+    /// backup with its legacy fields intact must be migrated again rather than
+    /// skipped by a marker nothing cleaned up.
+    public mutating func clearMigrationMarkers(_ projectID: UUID) {
+        migratedRepoProjects.remove(projectID.uuidString)
+        migratedBindingProjects.remove(projectID.uuidString)
+    }
+
+    /// Whether the migration scan for `generation` still needs to run.
+    public func needsScan(_ generation: Int) -> Bool { scanCompleteThrough < generation }
+
+    /// Records that the scan for `generation` has completed. `max`, not a
+    /// plain assignment: a store must never move this backward.
+    public mutating func markScanComplete(_ generation: Int) {
+        scanCompleteThrough = max(scanCompleteThrough, generation)
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case bindings, migratedRepoProjects, migratedBindingProjects
+        case bindings, migratedRepoProjects, migratedBindingProjects, scanCompleteThrough
     }
 
     public init(from decoder: any Decoder) throws {
@@ -100,5 +128,8 @@ public struct HubConfig: Codable, Sendable {
                                                               forKey: .migratedRepoProjects) ?? []
         migratedBindingProjects = try container.decodeIfPresent(Set<String>.self,
                                                                 forKey: .migratedBindingProjects) ?? []
+        // A document written before the gate existed still loads and — since
+        // this defaults to 0 — correctly reports that it needs a scan.
+        scanCompleteThrough = try container.decodeIfPresent(Int.self, forKey: .scanCompleteThrough) ?? 0
     }
 }

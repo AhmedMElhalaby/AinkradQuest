@@ -231,10 +231,11 @@ struct OverlayMigrationTests {
         let repository = FailingSaveProjectRepository()
         repository.failSaves = false
         let projectID = UUID(), connectionID = UUID()
-        let document = ProjectDocument(project: Project(
-            id: projectID, name: "Legacy", kind: .software,
-            connectionID: connectionID, remoteProjectKey: "QST",
-            repos: [AttachedRepo(id: UUID(), connectionID: connectionID, owner: "acme", name: "api")]))
+        var legacyProject = Project(id: projectID, name: "Legacy", kind: .software)
+        legacyProject.legacyConnectionID = connectionID
+        legacyProject.legacyRemoteProjectKey = "QST"
+        legacyProject.legacyRepos = [AttachedRepo(id: UUID(), connectionID: connectionID, owner: "acme", name: "api")]
+        let document = ProjectDocument(project: legacyProject)
         try repository.saveProject(document)
         let overlay = OverlayStore(repository: repository)
 
@@ -284,5 +285,90 @@ struct OverlayMigrationTests {
 
         let failure = try #require(store.persistenceFailure)
         #expect(failure.contains("1"))
+    }
+
+    /// The subtle half of the gate: a `.blocked` project must NOT let the
+    /// scan close. Closing it would strand that project's data behind a gate
+    /// that never opens again — no error, no banner on later launches, the
+    /// data simply never arrives. This drives the real `ProjectStore.init`
+    /// path (as `blockedMigrationSurfacesToProjectStore` does) but goes
+    /// further: it inspects `scanCompleteThrough` directly, then resolves the
+    /// corrupt overlay and builds a SECOND store to prove the scan actually
+    /// runs again and the data lands — proving the retry, not just the
+    /// non-closure.
+    @Test("a blocked project keeps the scan open, and it completes on a later launch once resolved")
+    func blockedProjectKeepsScanOpenAndRetriesLater() throws {
+        let documents = MemoryDocumentStore()
+        let repository = DocumentProjectRepository(documents: documents)
+        let projectID = UUID(), connectionID = UUID()
+        documents.setData(try legacyDocument(projectID: projectID, connectionID: connectionID),
+                          forKey: "project-\(projectID.uuidString)")
+        documents.setData(Data("not json".utf8), forKey: "overlay-project-\(projectID.uuidString)")
+        let summary = ProjectSummary(id: projectID, name: "Legacy", icon: "folder",
+                                     colorToken: "accent", kind: .software, state: .active,
+                                     updatedAt: Date())
+        try repository.saveIndex([summary])
+        let overlay = OverlayStore(repository: repository)
+
+        let first = ProjectStore(repository: repository, overlay: overlay)
+        #expect(first.persistenceFailure != nil)
+        // The repos half was blocked, so the scan must NOT be marked
+        // complete — otherwise this project's data would never be retried.
+        #expect(overlay.hubConfig().scanCompleteThrough == 0)
+
+        // Resolve the condition: remove the corrupt overlay bytes so the next
+        // load succeeds. A fresh `OverlayStore` on the same repository is a
+        // fair simulation of a relaunch — `OverlayStore` caches
+        // `unreadableProjects` in memory for its own lifetime, so clearing
+        // that requires a new instance either way, exactly as a real
+        // relaunch would produce one.
+        documents.setData(nil, forKey: "overlay-project-\(projectID.uuidString)")
+        let overlaySecond = OverlayStore(repository: repository)
+
+        let second = ProjectStore(repository: repository, overlay: overlaySecond)
+
+        // The scan ran again (it was never marked complete) and this time
+        // the migration succeeded: no more blocked banner, the repos landed,
+        // and the scan is now marked complete.
+        #expect(second.persistenceFailure == nil)
+        #expect(overlaySecond.overlay(for: projectID).repos.map(\.slug) == ["acme/api"])
+        #expect(overlaySecond.hubConfig().scanCompleteThrough == ProjectStore.migrationGeneration)
+    }
+
+    @Test("a completed scan does not re-read every project on the next launch")
+    func scanIsGatedAfterCompletion() throws {
+        let documents = CountingDocumentStore()
+        let repository = DocumentProjectRepository(documents: documents)
+        let overlay = OverlayStore(repository: repository)
+        let first = ProjectStore(repository: repository, overlay: overlay)
+        _ = first.createProject(name: "One", kind: .software, actor: .user)
+        _ = first.createProject(name: "Two", kind: .software, actor: .user)
+
+        documents.resetCounts()
+        let overlaySecond = OverlayStore(repository: repository)
+        _ = ProjectStore(repository: repository, overlay: overlaySecond)
+
+        // The scan already completed, so relaunching must not full-decode every
+        // project document again. `loadIndex` always reads "project-index" —
+        // itself prefixed "project-" — so isolate PER-PROJECT reads by
+        // subtracting that unavoidable read rather than asserting zero total.
+        #expect(documents.reads(withPrefix: "project-") == documents.reads(withPrefix: "project-index"))
+    }
+
+    @Test("an ungated store still scans, so an upgrade migrates")
+    func scanRunsWhenNotYetComplete() throws {
+        let documents = CountingDocumentStore()
+        let repository = DocumentProjectRepository(documents: documents)
+        let overlay = OverlayStore(repository: repository)
+        let store = ProjectStore(repository: repository, overlay: overlay)
+        _ = store.createProject(name: "One", kind: .software, actor: .user)
+
+        // Clear the completion marker to simulate a pre-gate store.
+        overlay.updateHubConfig { $0.scanCompleteThrough = 0 }
+        documents.resetCounts()
+        let overlaySecond = OverlayStore(repository: repository)
+        _ = ProjectStore(repository: repository, overlay: overlaySecond)
+
+        #expect(documents.reads(withPrefix: "project-") > documents.reads(withPrefix: "project-index"))
     }
 }

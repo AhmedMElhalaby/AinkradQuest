@@ -9,15 +9,21 @@ import AinkradAppKit
 /// already-open window.
 ///
 /// Also hosts the two root grants (`FolderBookmark.projectsRootKey` /
-/// `vaultRootKey`) that drive automatic attachment suggestions at project
-/// creation time — and ONLY that. Granting a root does not attach anything by
-/// itself; a project's Overview always has its own "Attach folder…" button
-/// (`FolderAttachButton`), independent of these grants.
+/// `vaultRootKey`). `projectsRootKey` drives ONLY attachment suggestions at
+/// project-creation time — granting it does not attach anything by itself; a
+/// project's Overview always has its own "Attach folder…" button
+/// (`FolderAttachButton`), independent of this grant. `vaultRootKey` has a
+/// SECOND consumer as of the backup work: `BackupSettings` reads and writes
+/// through the same bookmark to back up and restore the overlay. This is the
+/// ONLY place either grant is set or cleared — `BackupSettings` shows the
+/// vault grant read-only and points here to change it, so there is never a
+/// second control that can silently diverge from this one.
 struct QuestSettingsView: View {
     let presentation: any PluginPresentationControl
     let documents: PluginDocumentStore
     @Bindable var store: ProjectStore
     @Bindable var registry: ConnectionRegistry
+    @Bindable var snapshots: SnapshotStore
 
     @Environment(\.ainkradTheme) private var theme
     @Environment(\.ainkradTypography) private var typo
@@ -42,13 +48,34 @@ struct QuestSettingsView: View {
     /// the fresh `ConnectionDraft` init argument to a view that kept the
     /// previous open's stale `@State` draft.
     @State private var connectionDraftToken = UUID()
+    /// The backup awaiting a confirmed restore, and its failure message —
+    /// hoisted out of `BackupSettings` (its only writer) the same way
+    /// `connectionDraft` is hoisted out of `ConnectionsSettings`, so the
+    /// confirm dialog presents from this root rather than one of
+    /// `BackupSettings`' two inner `AinkradSectionFrame` boxes.
+    @State private var pendingRestore: SnapshotFile?
+    @State private var restoreError: String?
+    /// The project whose corrupt overlay is awaiting a confirmed discard —
+    /// hoisted to this root the same way `pendingRestore` is: this is a
+    /// destructive action (`OverlayStore.removeOverlay`) and needs the
+    /// confirm dialog presented from the settings root, not a narrow section
+    /// box. This is the exit `OverlayHealth.writeBlocked`'s own message
+    /// promises ("discard it to start fresh") but that, before this fix, had
+    /// no UI path to reach.
+    @State private var pendingDiscard: UUID?
+    /// The vault grant awaiting a confirmed clear (ADDITION A). Clearing it
+    /// silently turns off the only protection the overlay has, so it gets the
+    /// same treatment as restore/discard — hoisted here rather than presented
+    /// from `rootRow` itself, for the identical clipping reason.
+    @State private var pendingClearVaultGrant = false
 
     init(presentation: any PluginPresentationControl, documents: PluginDocumentStore,
-         store: ProjectStore, registry: ConnectionRegistry) {
+         store: ProjectStore, registry: ConnectionRegistry, snapshots: SnapshotStore) {
         self.presentation = presentation
         self.documents = documents
         self.store = store
         self.registry = registry
+        self.snapshots = snapshots
         _mode = State(initialValue: presentation.current)
     }
 
@@ -74,16 +101,34 @@ struct QuestSettingsView: View {
                                report: { message, _ in error = message },
                                draft: $connectionDraft, draftToken: $connectionDraftToken)
 
+            BackupSettings(snapshots: snapshots, pendingRestore: $pendingRestore,
+                           restoreError: $restoreError)
+
+            if !store.overlay.health.affectedProjects.isEmpty {
+                AinkradSectionFrame(title: "Corrupt overlays") {
+                    VStack(alignment: .leading, spacing: AinkradSpacing.md) {
+                        caption("These projects' saved notes could not be read. Restore from a backup above, or discard to start fresh with an empty overlay.")
+                        ForEach(Array(store.overlay.health.affectedProjects), id: \.self) { projectID in
+                            AinkradFormRow(title: projectName(projectID), help: "Overlay could not be read.") {
+                                AinkradButton(title: "Discard…", style: .danger) {
+                                    pendingDiscard = projectID
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             AinkradSectionFrame(title: "Folder grants") {
                 VStack(alignment: .leading, spacing: AinkradSpacing.md) {
-                    caption("These folders are used only to suggest attachments when a project is created — nothing is read or written otherwise. Every project's Overview also has its own Attach folder… button, which works whether or not you set anything here.")
+                    caption("Every project's Overview also has its own Attach folder… button, which works whether or not you set anything here.")
 
                     rootRow(title: "Projects folder",
-                           help: "Suggests a matching repo or folder by name when you create a project.",
+                           help: "Used only to suggest a matching repo or folder by name when you create a project — nothing else reads or writes it.",
                            key: FolderBookmark.projectsRootKey)
 
                     rootRow(title: "Vault folder",
-                           help: "Suggests a matching vault folder by name when you create a project.",
+                           help: "Two uses: suggests a matching vault folder by name when you create a project, and is where Quest backs up and restores your notes, personal priority and time entries — see Backups above.",
                            key: FolderBookmark.vaultRootKey)
 
                     // A banner, not a toast: this view is mounted by the HOST's
@@ -113,6 +158,82 @@ struct QuestSettingsView: View {
                                  onClose: { connectionDraft = nil })
                     .id(connectionDraftToken)
             }
+        }
+        // Restore is the most destructive action Quest offers — it replaces
+        // the live overlay with the snapshot's — so it gets a confirm dialog,
+        // hoisted to this root for the same reason `connectionDraft`'s modal
+        // is: `.ainkradConfirmDialog`/`.ainkradModal` render in the MODIFIED
+        // view's own bounds, and `BackupSettings`' two `AinkradSectionFrame`
+        // boxes are narrow, offset boxes, not this window.
+        .ainkradConfirmDialog(isPresented: Binding(get: { pendingRestore != nil },
+                                                   set: { if !$0 { pendingRestore = nil } }),
+                              title: "Restore this backup?",
+                              message: pendingRestore.map {
+                                  "This replaces your current notes, personal priority and time entries "
+                                      + "with the backup from \(SnapshotAge.describe($0.takenAt)). "
+                                      + "Anything changed since then will be lost. This cannot be undone."
+                              } ?? "",
+                              confirmTitle: "Restore",
+                              isDestructive: true) {
+            if let file = pendingRestore {
+                performRestore(file)
+            }
+            pendingRestore = nil
+        }
+        // Discarding a corrupt overlay replaces it with nothing — irreversible
+        // by definition, since the whole reason it is offered is that the
+        // bytes could not be read in the first place. Same hoisting reasoning
+        // as `pendingRestore`.
+        .ainkradConfirmDialog(isPresented: Binding(get: { pendingDiscard != nil },
+                                                   set: { if !$0 { pendingDiscard = nil } }),
+                              title: "Discard this project's notes?",
+                              message: pendingDiscard.map {
+                                  "\(projectName($0))'s saved notes could not be read and cannot be recovered from here. "
+                                      + "Discarding replaces them with an empty overlay so you can start fresh, "
+                                      + "or restore from a backup above instead. This cannot be undone."
+                              } ?? "",
+                              confirmTitle: "Discard",
+                              isDestructive: true) {
+            if let projectID = pendingDiscard {
+                store.overlay.removeOverlay(for: projectID)
+            }
+            pendingDiscard = nil
+        }
+        // ADDITION A: clearing the vault grant silently turns off the only
+        // protection the overlay has — the age indicator would then quietly
+        // report a backup that stopped, which is the exact failure this
+        // milestone exists to prevent. Confirmed here, at the root, for the
+        // same clipping reason as the two dialogs above. The PROJECTS grant
+        // deliberately gets no such confirm — see `clearRoot`.
+        .ainkradConfirmDialog(isPresented: $pendingClearVaultGrant,
+                              title: "Turn off backups?",
+                              message: "Clearing the vault folder stops Quest from backing up your "
+                                  + "notes, personal priority and time entries. Existing backups in "
+                                  + "that folder are not deleted, but no new ones will be written "
+                                  + "until you grant a vault folder again.",
+                              confirmTitle: "Clear",
+                              isDestructive: true) {
+            FolderBookmark.clear(forKey: FolderBookmark.vaultRootKey, in: documents)
+            grantRevision += 1
+        }
+    }
+
+    /// A best-effort display name for a project id that may no longer be in
+    /// `store.projects`/`trashedProjects` (e.g. already purged) — falls back
+    /// to a shortened id rather than crashing or showing nothing.
+    private func projectName(_ projectID: UUID) -> String {
+        (store.projects + store.trashedProjects).first { $0.id == projectID }?.name
+            ?? "Project \(projectID.uuidString.prefix(8))"
+    }
+
+    private func performRestore(_ file: SnapshotFile) {
+        do {
+            try snapshots.restore(from: file)
+            restoreError = nil
+        } catch let failure as SnapshotError {
+            restoreError = failure.message
+        } catch {
+            restoreError = error.localizedDescription
         }
     }
 
@@ -180,6 +301,15 @@ struct QuestSettingsView: View {
     }
 
     private func clearRoot(key: String) {
+        // The vault grant drives backups now (ADDITION A) — clearing it must
+        // be confirmed, unlike the projects grant, which still only feeds
+        // creation-time suggestions and costs nothing to clear. A confirm on
+        // the projects grant too would just be noise that teaches the user to
+        // click through the one that matters.
+        if key == FolderBookmark.vaultRootKey {
+            pendingClearVaultGrant = true
+            return
+        }
         FolderBookmark.clear(forKey: key, in: documents)
         grantRevision += 1
     }
