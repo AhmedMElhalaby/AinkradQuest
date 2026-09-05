@@ -14,13 +14,37 @@ settings:
 packages:
   AinkradAppKit:
     url: https://github.com/AhmedMElhalaby/AinkradAppKit
-    # Must be EXACTLY the revision the host's build checks out — not merely "<=",
-    # which is the inherited claim that caused a day of misdiagnosis. Read the
+    # Must NEVER be ahead of the revision the host's build checks out. Read the
     # truth from the host, never from this comment:
     #   git -C ../Ainkrad/build/SourcePackages/checkouts/AinkradAppKit rev-parse HEAD
-    # 8944e959ddeaae2475709ae5e6ef0afd83bb0623 is the CURRENT pin, verified
-    # against that command. If you change `revision:` below, re-run the command
-    # above and confirm it matches before trusting the new pin.
+    #
+    # This comment used to demand an EXACT match, "not merely <=". That was
+    # wrong, and wrong in a way that made it unfollowable: the host advances its
+    # pin whenever the SDK gains something it needs, and every plugin lags until
+    # it has a reason to move. As of 2026-09-05 no plugin matched the host
+    # exactly and none had for weeks.
+    #
+    # But do not read "not ahead" as "behind is safe". It is not. The host
+    # embeds the ONE dynamic copy of the SDK, and this plugin links whatever
+    # mangled symbols its OWN revision declared. Two ways that ends badly:
+    #
+    #   ahead  — links symbols the host's older copy never defined. Always dead.
+    #   behind — fine ONLY while every symbol it linked still exists in the
+    #            host's newer copy. Removing a public declaration breaks that,
+    #            and so does merely adding a defaulted parameter to an existing
+    #            one, because that re-mangles the symbol. See the history below:
+    #            that failure was a pin BEHIND the host.
+    #
+    # So the rule is: at or behind the host, AND no public symbol removed or
+    # re-mangled in between. `make abi-check` in the SDK is what guards the
+    # second half — note it baselines only AinkradAppKitContract and
+    # AinkradSignal, so a change in AinkradAppKitUI needs checking by hand:
+    #   git -C ../AinkradAppKit diff <thisPin>..<hostPin> -- Sources \
+    #     | grep -E '^[-+].*\b(public|open)\b'
+    #
+    # Source compiles either way. Only linking tells the truth, so the real
+    # check is loading the built bundle into the host and confirming it:
+    #   lsof -p $(pgrep -f Ainkrad.app/Contents/MacOS/Ainkrad) | grep Plugin.bundle
     #
     # History, kept as an example of what "close enough" costs: an earlier pin,
     # d5d994b (one day older than 98cb823), built and tested fine but died at
