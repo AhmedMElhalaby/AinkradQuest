@@ -81,6 +81,11 @@ public final class SnapshotStore {
     /// interval costs nothing — it is NOT how often a snapshot is written;
     /// `SnapshotCadence.quietPeriod` governs that.
     static let pollInterval: TimeInterval = 30
+    /// Lets macOS coalesce this wakeup into another timer's window instead of
+    /// forcing a precise 30-second CPU wake. Half the interval is safe here:
+    /// `tick()` is a revision comparison whose only consumer is a debounced
+    /// snapshot, so firing anywhere in a 15-second window is indistinguishable.
+    static let pollTolerance: TimeInterval = pollInterval * 0.5
     private var pollTimer: Timer?
     /// `overlay.revision` as observed by the most recent `tick()`.
     private var observedRevision: Int?
@@ -101,6 +106,7 @@ public final class SnapshotStore {
         pollTimer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+        pollTimer?.tolerance = Self.pollTolerance
     }
 
     /// Stops the timer without writing anything. Called from
