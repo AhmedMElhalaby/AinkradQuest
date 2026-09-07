@@ -53,6 +53,10 @@ struct TrashView: View {
     }
 
     var body: some View {
+        // Computed once per render rather than as a computed property
+        // re-flatMapped/filtered over every project's items on each access
+        // (previously read twice for emptiness and again in the ForEach).
+        let itemEntries = itemEntries
         VStack(alignment: .leading, spacing: AinkradSpacing.md) {
             header
             if store.trashedProjects.isEmpty && itemEntries.isEmpty {
@@ -61,10 +65,10 @@ struct TrashView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: AinkradSpacing.md) {
+                    LazyVStack(alignment: .leading, spacing: AinkradSpacing.md) {
                         if !store.trashedProjects.isEmpty {
                             AinkradSectionFrame(title: "Projects") {
-                                VStack(spacing: AinkradSpacing.xs) {
+                                LazyVStack(spacing: AinkradSpacing.xs) {
                                     ForEach(store.trashedProjects) { project in
                                         projectRow(project)
                                     }
@@ -73,7 +77,7 @@ struct TrashView: View {
                         }
                         if !itemEntries.isEmpty {
                             AinkradSectionFrame(title: "Items") {
-                                VStack(spacing: AinkradSpacing.xs) {
+                                LazyVStack(spacing: AinkradSpacing.xs) {
                                     ForEach(itemEntries) { entry in
                                         itemRow(entry)
                                     }

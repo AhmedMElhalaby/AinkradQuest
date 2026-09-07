@@ -43,7 +43,7 @@ struct TimelineSurface: View {
 
                 if !result.unscheduled.isEmpty {
                     AinkradSectionHeader(title: "Unscheduled")
-                    VStack(alignment: .leading, spacing: AinkradSpacing.sm) {
+                    LazyVStack(alignment: .leading, spacing: AinkradSpacing.sm) {
                         ForEach(result.unscheduled) { item in
                             AinkradCard {
                                 Text(item.title)

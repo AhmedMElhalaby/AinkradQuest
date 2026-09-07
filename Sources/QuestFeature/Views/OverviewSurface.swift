@@ -12,9 +12,11 @@ struct OverviewSurface: View {
 
     @Environment(\.ainkradTheme) private var ainkradTheme
 
-    private var epics: [WorkItem] { document.items.filter { $0.type == .epic && !$0.isDeleted } }
-
     var body: some View {
+        // Computed once per render rather than as a computed property
+        // re-filtered on every access (count, isEmpty, and ForEach each read
+        // it below).
+        let epics = document.items.filter { $0.type == .epic && !$0.isDeleted }
         ScrollView {
             VStack(alignment: .leading, spacing: AinkradSpacing.lg) {
                 header
@@ -46,7 +48,7 @@ struct OverviewSurface: View {
                         AinkradEmptyState(icon: "flag", title: "No epics",
                                           message: "Group work under an epic to track progress here.")
                     } else {
-                        VStack(alignment: .leading, spacing: AinkradSpacing.md) {
+                        LazyVStack(alignment: .leading, spacing: AinkradSpacing.md) {
                             ForEach(epics) { epic in
                                 let progress = EpicProgress.rollup(epicID: epic.id, in: document.items,
                                                                    scheme: document.project.statusScheme)

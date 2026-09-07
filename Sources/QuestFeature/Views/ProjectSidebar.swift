@@ -103,7 +103,7 @@ struct QuestSidebar: View {
             }
 
             ScrollView {
-                VStack(spacing: AinkradSpacing.xs) {
+                LazyVStack(spacing: AinkradSpacing.xs) {
                     ForEach(visibleProjects) { project in
                         AinkradListRow(isSelected: selection == project.id,
                                        onTap: { selection = project.id },
