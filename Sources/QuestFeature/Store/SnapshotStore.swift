@@ -81,6 +81,11 @@ public final class SnapshotStore {
     /// interval costs nothing — it is NOT how often a snapshot is written;
     /// `SnapshotCadence.quietPeriod` governs that.
     static let pollInterval: TimeInterval = 30
+    /// Lets macOS coalesce this wakeup into another timer's window instead of
+    /// forcing a precise 30-second CPU wake. Half the interval is safe here:
+    /// `tick()` is a revision comparison whose only consumer is a debounced
+    /// snapshot, so firing anywhere in a 15-second window is indistinguishable.
+    static let pollTolerance: TimeInterval = pollInterval * 0.5
     private var pollTimer: Timer?
     /// `overlay.revision` as observed by the most recent `tick()`.
     private var observedRevision: Int?
@@ -97,10 +102,47 @@ public final class SnapshotStore {
         observedRevision = overlay.revision
         lastSnapshotRevision = overlay.revision
         lastChangeAt = .distantPast
+        observeOverlay()
+        // The quiet-period timer still exists, but is now ARMED BY A CHANGE
+        // rather than run forever: with no edits, there is no wakeup at all.
+        armQuietPeriodTimer()
+    }
+
+    /// Re-arms itself on every change — `withObservationTracking` fires once.
+    private func observeOverlay() {
+        withObservationTracking {
+            _ = overlay.revision
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.overlayDidChange(revision: self.overlay.revision, at: Date())
+                self.observeOverlay()
+            }
+        }
+    }
+
+    /// Called when `withObservationTracking` reports `overlay.revision` may
+    /// have changed. Internal (not `public`) — the real caller is
+    /// `observeOverlay()`; tests call it directly to simulate a change
+    /// without waiting on Observation's runloop-driven notification.
+    func overlayDidChange(revision: Int, at now: Date) {
+        if observedRevision != revision {
+            observedRevision = revision
+            lastChangeAt = now
+        }
+        armQuietPeriodTimer()
+    }
+
+    /// One-shot, replacing any pending one: fires once the quiet period could
+    /// have elapsed, then `tick()` decides whether to actually write.
+    private func armQuietPeriodTimer() {
         pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: SnapshotCadence.quietPeriod,
+                                         repeats: false) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+        timer.tolerance = Self.pollTolerance
+        pollTimer = timer
     }
 
     /// Stops the timer without writing anything. Called from
@@ -145,6 +187,25 @@ public final class SnapshotStore {
         self.documents = documents
         self.projectIDs = projectIDs
     }
+
+    /// Testing seam: a minimally-wired store for exercising the observation
+    /// cadence in isolation, without a caller needing to construct its own
+    /// overlay/documents/projectIDs. Internal — every caller is a test in
+    /// this module.
+    static func makeForTesting() -> SnapshotStore {
+        SnapshotStore(overlay: OverlayStore(repository: InMemoryProjectRepository()),
+                      documents: InMemoryDocumentStoreForSnapshotTesting(), projectIDs: { [] })
+    }
+
+    /// Testing seam mirroring `observedRevision`, which is otherwise private.
+    var observedRevisionForTesting: Int? { observedRevision }
+
+    /// Testing seam exposing the `overlay` this store was wired with (only
+    /// meaningful paired with `makeForTesting()`), so a test can drive a REAL
+    /// mutation through `OverlayStore.update` — the only way to actually
+    /// exercise `withObservationTracking`'s `onChange`, as opposed to calling
+    /// `overlayDidChange` directly, which never touches Observation at all.
+    var overlayForTesting: OverlayStore { overlay }
 
     /// Deliberately NOT `public`: `FolderBookmark` is an internal type, and a
     /// public method cannot expose it. Every consumer — the settings view — is
@@ -314,5 +375,17 @@ public final class SnapshotStore {
             config.migratedRepoProjects = snapshot.migratedRepoProjects
             config.migratedBindingProjects = snapshot.migratedBindingProjects
         }
+    }
+}
+
+/// Minimal in-memory `PluginDocumentStore` for `SnapshotStore.makeForTesting()`.
+/// Internal — no vault access is ever granted, so `snapshotNow()` cannot
+/// actually write with it; it exists only to satisfy the initializer for
+/// tests exercising the observation/cadence plumbing, not persistence.
+final class InMemoryDocumentStoreForSnapshotTesting: PluginDocumentStore {
+    private var storage: [String: Data] = [:]
+    func data(forKey key: String) -> Data? { storage[key] }
+    func setData(_ data: Data?, forKey key: String) {
+        if let data { storage[key] = data } else { storage.removeValue(forKey: key) }
     }
 }
