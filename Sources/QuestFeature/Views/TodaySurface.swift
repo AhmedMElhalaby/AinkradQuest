@@ -236,7 +236,7 @@ struct TodaySurface: View {
     private func section(_ title: String, _ items: [WorkItem], status: AinkradStatus) -> some View {
         if !items.isEmpty {
             AinkradSectionFrame(title: title) {
-                VStack(spacing: AinkradSpacing.xs) {
+                LazyVStack(spacing: AinkradSpacing.xs) {
                     ForEach(items) { item in
                         AinkradListRow(onTap: { onOpen(item) },
                                        leading: {

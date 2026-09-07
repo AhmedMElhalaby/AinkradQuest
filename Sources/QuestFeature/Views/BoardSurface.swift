@@ -37,13 +37,15 @@ struct BoardSurface: View {
                 .padding(.top, AinkradSpacing.sm)
             ScrollView(.horizontal) {
                 if groupByEpic {
-                    VStack(alignment: .leading, spacing: AinkradSpacing.lg) {
-                        // `groupedByEpic` keeps its orphan backstop: an item
-                        // whose epic is gone lands in a trailing "No epic"
-                        // group instead of vanishing off the board.
-                        ForEach(BoardGrouping.groupedByEpic(items: document.items,
-                                                            scheme: document.project.statusScheme,
-                                                            filter: activeFilter)) { group in
+                    // Computed once per render rather than inline inside
+                    // ForEach — `groupedByEpic` keeps its orphan backstop: an
+                    // item whose epic is gone lands in a trailing "No epic"
+                    // group instead of vanishing off the board.
+                    let groups = BoardGrouping.groupedByEpic(items: document.items,
+                                                             scheme: document.project.statusScheme,
+                                                             filter: activeFilter)
+                    LazyVStack(alignment: .leading, spacing: AinkradSpacing.lg) {
+                        ForEach(groups) { group in
                             VStack(alignment: .leading, spacing: AinkradSpacing.sm) {
                                 AinkradSectionHeader(title: group.epic.title,
                                                      subtitle: group.isOrphanGroup
@@ -54,9 +56,10 @@ struct BoardSurface: View {
                     }
                     .padding(AinkradSpacing.md)
                 } else {
-                    columnStrip(BoardGrouping.columns(items: document.items,
-                                                      scheme: document.project.statusScheme,
-                                                      filter: activeFilter))
+                    let columns = BoardGrouping.columns(items: document.items,
+                                                        scheme: document.project.statusScheme,
+                                                        filter: activeFilter)
+                    columnStrip(columns)
                         .padding(AinkradSpacing.md)
                 }
             }
@@ -85,7 +88,10 @@ struct BoardSurface: View {
     }
 
     private func columnStrip(_ columns: [BoardColumn]) -> some View {
-        HStack(alignment: .top, spacing: AinkradSpacing.md) {
+        // LazyHStack for the columns and LazyVStack for the cards within each
+        // column — a board with 8 columns of 200 cards would otherwise build
+        // 1,600 live views up front.
+        LazyHStack(alignment: .top, spacing: AinkradSpacing.md) {
             ForEach(columns) { column in
                 VStack(alignment: .leading, spacing: AinkradSpacing.sm) {
                     HStack {
@@ -93,10 +99,13 @@ struct BoardSurface: View {
                         Spacer()
                         AinkradBadge(text: "\(column.items.count)")
                     }
-                    ForEach(column.items) { item in
-                        card(item).draggable(item.id.uuidString)
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: AinkradSpacing.sm) {
+                            ForEach(column.items) { item in
+                                card(item).draggable(item.id.uuidString)
+                            }
+                        }
                     }
-                    Spacer(minLength: 0)
                 }
                 // A deliberate fixed column width, so columns stay drop-sized
                 // regardless of how much a card's title wants.
