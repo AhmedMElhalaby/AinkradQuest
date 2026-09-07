@@ -53,7 +53,7 @@ packages:
     # (`init(title:help:control:)`) no longer existed in the framework the host
     # embedded. Source compiled either way — only linking told the truth. That
     # is the failure mode this comment exists to prevent recurring.
-    revision: 6cd1599a602e0a7d20f5d9d87b08c547417f3a4e
+    revision: 91ed630a24dc187f8988c104d16a640d3ee7562c
 targets:
   QuestFeature:
     type: library.static
